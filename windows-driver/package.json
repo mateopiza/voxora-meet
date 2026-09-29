@@ -1,0 +1,19 @@
+{
+  "name": "@voxora-meet/windows-driver",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Driver de audio virtual WaveRT (voxorameet.sys) + cliente Node VirtualMic y helper WASAPI user-mode para VOXORA Meet.",
+  "license": "UNLICENSED",
+  "engines": { "node": ">=22" },
+  "exports": {
+    ".": "./src/virtual-mic.mjs",
+    "./virtual-mic": "./src/virtual-mic.mjs"
+  },
+  "scripts": {
+    "test": "node --test \"src/**/*.test.mjs\"",
+    "build:native": "cmd /c native\\build.cmd",
+    "build:driver": "powershell -NoProfile -ExecutionPolicy Bypass -File build-driver.ps1",
+    "list-endpoints": "native\\bin\\wasapi-render.exe --list"
+  }
+}

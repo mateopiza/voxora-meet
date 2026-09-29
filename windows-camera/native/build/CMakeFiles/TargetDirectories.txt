@@ -1,0 +1,6 @@
+D:/Escritorio/dev/VoXoRA/CORE/05 VOXORA Meet/windows-camera/native/build/CMakeFiles/VoxoraMeetVCam.dir
+D:/Escritorio/dev/VoXoRA/CORE/05 VOXORA Meet/windows-camera/native/build/CMakeFiles/VoxoraMeetVCamHost.dir
+D:/Escritorio/dev/VoXoRA/CORE/05 VOXORA Meet/windows-camera/native/build/CMakeFiles/VoxoraMeetFrameWriter.dir
+D:/Escritorio/dev/VoXoRA/CORE/05 VOXORA Meet/windows-camera/native/build/CMakeFiles/VoxoraMeetCameraTest.dir
+D:/Escritorio/dev/VoXoRA/CORE/05 VOXORA Meet/windows-camera/native/build/CMakeFiles/edit_cache.dir
+D:/Escritorio/dev/VoXoRA/CORE/05 VOXORA Meet/windows-camera/native/build/CMakeFiles/rebuild_cache.dir

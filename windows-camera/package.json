@@ -1,0 +1,17 @@
+{
+  "name": "@voxora-meet/windows-camera",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Cámara virtual Windows (Media Foundation Virtual Camera API) para VOXORA Meet: DLL media source + host + frame writer + control desde Node.",
+  "main": "./src/virtual-camera.mjs",
+  "exports": {
+    ".": "./src/virtual-camera.mjs"
+  },
+  "engines": { "node": ">=22" },
+  "os": ["win32"],
+  "scripts": {
+    "test": "node --test src/*.test.mjs",
+    "build:native": "cmd /c native\\build.cmd"
+  }
+}

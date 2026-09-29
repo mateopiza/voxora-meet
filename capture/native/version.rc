@@ -1,0 +1,6 @@
+// VERSIONINFO de wasapi-capture.exe (versión: native-common/voxora_version.h, desde package.json).
+#pragma code_page(65001)
+#define VX_FILE_DESCRIPTION "VOXORA Meet · captura de micrófono (WASAPI)"
+#define VX_INTERNAL_NAME "wasapi-capture"
+#define VX_ORIGINAL_FILENAME "wasapi-capture.exe"
+#include "voxora_version.rc"

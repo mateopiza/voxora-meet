@@ -1,0 +1,14 @@
+// Recursos de VoxoraMeetSetup.exe: icono, manifest (requireAdministrator), UI y carga útil.
+// La UI (gen\setup-ui.html) y gen\payload.rc los genera scripts/release.mjs antes de compilar.
+#pragma code_page(65001)
+#include <windows.h>
+
+101 ICON "..\\..\\app\\native-shell\\res\\voxora-meet.ico"
+1 24 "setup.manifest"
+SETUP_UI RCDATA "gen\\setup-ui.html"
+#include "gen\\payload.rc"
+
+#define VX_FILE_DESCRIPTION "Instalador de VOXORA Meet"
+#define VX_INTERNAL_NAME "VoxoraMeetSetup"
+#define VX_ORIGINAL_FILENAME "VoxoraMeetSetup.exe"
+#include "voxora_version.rc"

@@ -1,0 +1,55 @@
+/* VØXORA Live — Radii, borders, shadows, blur (the "glass pastel" grammar) */
+
+:root {
+  /* — Radii — brand loves generous, chunky rounding — */
+  --radius-xs: 0.5rem;    /*  8px — chips */
+  --radius-sm: 0.75rem;   /* 12px — pill inputs / small buttons */
+  --radius-md: 1rem;      /* 16px — inputs, secondary buttons */
+  --radius-lg: 1.25rem;   /* 20px — small cards */
+  --radius-xl: 1.5rem;    /* 24px — module cards */
+  --radius-2xl: 2rem;     /* 32px — CTA / plans cards */
+  --radius-3xl: 2.5rem;   /* 40px — big auth card */
+  --radius-pill: 9999px;
+
+  /* — Border — glass hairline: white translucent over pastel — */
+  --border-glass: 1px solid var(--glass-hairline);
+  --border-glass-soft: 1px solid var(--glass-hairline-soft);
+  --border-divider: 1px solid var(--divider);
+
+  /* — Backdrop blur — a signature of VØXORA glass — */
+  --blur-sm: 8px;
+  --blur-md: 16px;
+  --blur-lg: 24px;
+  --blur-xl: 32px;   /* backdrop-blur-3xl in source */
+  --blur-orb: 80px;  /* small orb */
+  --blur-orb-lg: 120px;
+
+  /* — Shadows — soft & purpled — */
+  --shadow-glass-sm: 0 8px 30px rgba(13, 8, 22, 0.08);   /* header */
+  --shadow-glass: 0 8px 32px rgba(13, 8, 22, 0.04);      /* feature cards */
+  --shadow-glass-lg: 0 20px 60px rgba(13, 8, 22, 0.05);  /* CTA card */
+  --shadow-glass-auth: 0 20px 60px rgba(13, 8, 22, 0.08);/* auth card */
+  --shadow-cta: 0 10px 25px -5px rgba(139, 92, 246, 0.4);/* gradient button */
+  --shadow-pro: 0 10px 40px rgba(139, 92, 246, 0.15);    /* highlighted plan */
+  --shadow-inner-soft: inset 0 1px 2px rgba(13, 8, 22, 0.04);
+
+  /* — Orb geometry (background decorative pastel blobs) — */
+  --orb-size-sm: 300px; /* @kind other */
+  --orb-size-md: 500px; /* @kind other */
+  --orb-size-lg: 600px; /* @kind other */
+  --orb-opacity-cyan: 0.40; /* @kind other */
+  --orb-opacity-violet: 0.30; /* @kind other */
+  --orb-opacity-pink: 0.20; /* @kind other */
+
+  /* — Motion — */
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1); /* @kind other */
+  --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1); /* @kind other */
+  --dur-fast: 150ms; /* @kind other */
+  --dur-base: 250ms; /* @kind other */
+  --dur-slow: 400ms; /* @kind other */
+  --dur-hero: 700ms; /* @kind other */   /* motion.div initial in source */
+
+  /* — Hover treatment — */
+  --hover-scale: 1.03; /* @kind other */
+  --hover-scale-subtle: 1.02; /* @kind other */
+}

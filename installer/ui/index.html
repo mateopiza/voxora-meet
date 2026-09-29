@@ -1,0 +1,242 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; img-src data:; font-src data:">
+<title>Instalar VOXORA Meet</title>
+<!-- Fuente única del instalador. scripts/lib/setup-ui.mjs la convierte en un solo HTML autocontenido
+     (tokens VØXORA de app/ui/tokens, fuentes en data: URI, logo en línea) que se incrusta como recurso
+     SETUP_UI de VoxoraMeetSetup.exe y se carga con NavigateToString. -->
+<style>/*@TOKENS@*/</style>
+<style>/*@FONTS@*/</style>
+<style>/*@CSS@*/</style>
+</head>
+<body class="is-loading">
+<svg class="sprite" aria-hidden="true" xmlns="http://www.w3.org/2000/svg">
+  <symbol id="i-mic" viewBox="0 0 24 24"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><path d="M12 19v3"/></symbol>
+  <symbol id="i-languages" viewBox="0 0 24 24"><path d="m5 8 6 6"/><path d="m4 14 6-6 2-3"/><path d="M2 5h12"/><path d="M7 2h1"/><path d="m22 22-5-10-5 10"/><path d="M14 18h6"/></symbol>
+  <symbol id="i-video" viewBox="0 0 24 24"><path d="m16 13 5.223 3.482a.5.5 0 0 0 .777-.416V7.87a.5.5 0 0 0-.752-.432L16 10.5"/><rect x="2" y="6" width="14" height="12" rx="2"/></symbol>
+  <symbol id="i-folder" viewBox="0 0 24 24"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/></symbol>
+  <symbol id="i-shield" viewBox="0 0 24 24"><path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"/><path d="m9 12 2 2 4-4"/></symbol>
+  <symbol id="i-file" viewBox="0 0 24 24"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/><path d="M10 9H8"/><path d="M16 13H8"/><path d="M16 17H8"/></symbol>
+  <symbol id="i-check" viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></symbol>
+  <symbol id="i-x" viewBox="0 0 24 24"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></symbol>
+  <symbol id="i-minus" viewBox="0 0 24 24"><path d="M5 12h14"/></symbol>
+  <symbol id="i-arrow" viewBox="0 0 24 24"><path d="M5 12h14"/><path d="m12 5 7 7-7 7"/></symbol>
+  <symbol id="i-back" viewBox="0 0 24 24"><path d="m12 19-7-7 7-7"/><path d="M19 12H5"/></symbol>
+  <symbol id="i-external" viewBox="0 0 24 24"><path d="M15 3h6v6"/><path d="M10 14 21 3"/><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/></symbol>
+  <symbol id="i-alert" viewBox="0 0 24 24"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3"/><path d="M12 9v4"/><path d="M12 17h.01"/></symbol>
+  <symbol id="i-hdd" viewBox="0 0 24 24"><path d="M22 12H2"/><path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/><path d="M6 16h.01"/><path d="M10 16h.01"/></symbol>
+  <symbol id="i-sparkles" viewBox="0 0 24 24"><path d="M9.937 15.5A2 2 0 0 0 8.5 14.063l-6.135-1.582a.5.5 0 0 1 0-.962L8.5 9.936A2 2 0 0 0 9.937 8.5l1.582-6.135a.5.5 0 0 1 .963 0L14.063 8.5A2 2 0 0 0 15.5 9.937l6.135 1.581a.5.5 0 0 1 0 .964L15.5 14.063a2 2 0 0 0-1.437 1.437l-1.582 6.135a.5.5 0 0 1-.963 0z"/><path d="M20 3v4"/><path d="M22 5h-4"/></symbol>
+  <symbol id="i-trash" viewBox="0 0 24 24"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/></symbol>
+  <symbol id="i-key" viewBox="0 0 24 24"><path d="M2.586 17.414A2 2 0 0 0 2 18.828V21a1 1 0 0 0 1 1h3a1 1 0 0 0 1-1v-1a1 1 0 0 1 1-1h1a1 1 0 0 0 1-1v-1a1 1 0 0 1 1-1h.172a2 2 0 0 0 1.414-.586l.814-.814a6.5 6.5 0 1 0-4-4z"/><circle cx="16.5" cy="7.5" r=".5"/></symbol>
+  <symbol id="i-cloud" viewBox="0 0 24 24"><path d="M17.5 19H9a7 7 0 1 1 6.71-9h1.79a4.5 4.5 0 1 1 0 9Z"/></symbol>
+  <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M8 16H3v5"/></symbol>
+</svg>
+
+<div class="bg" aria-hidden="true">
+  <i class="orb orb--cyan"></i><i class="orb orb--violet"></i><i class="orb orb--pink"></i>
+  <i class="grid"></i>
+</div>
+
+<div class="frame">
+  <aside class="rail">
+    <div class="rail__brand">
+      <span class="rail__iso"><!--@ISOTIPO@--></span>
+      <span class="rail__logo"><!--@LOGO@--><span class="rail__tag">Meet</span></span>
+    </div>
+    <ol class="steps" id="steps"></ol>
+    <div class="rail__foot">
+      <span class="chip mono" id="versionChip">v—</span>
+      <span>Windows 10/11 · x64</span>
+    </div>
+  </aside>
+
+  <main class="stage">
+    <header class="titlebar" data-drag>
+      <span class="titlebar__title" id="titlebarTitle">Instalador</span>
+      <div class="wc">
+        <button class="wc__btn" data-act="minimize" title="Minimizar" aria-label="Minimizar"><svg class="i"><use href="#i-minus"/></svg></button>
+        <button class="wc__btn wc__btn--close" data-act="close" title="Cerrar" aria-label="Cerrar"><svg class="i"><use href="#i-x"/></svg></button>
+      </div>
+    </header>
+
+    <!-- 1 · Bienvenida -->
+    <section class="screen" data-screen="welcome">
+      <p class="eyebrow" id="welcomeEyebrow">Instalador</p>
+      <h1 class="display">Tu voz,<br><span class="grad">en cualquier idioma.</span></h1>
+      <p class="lead">VOXORA Meet dobla en vivo lo que dices en Google Meet con tu propia voz clonada, y retrasa el video lo justo para que tus labios y tu voz lleguen juntos.</p>
+      <div class="wave" aria-hidden="true" id="welcomeWave"></div>
+      <ul class="features">
+        <li class="feature"><span class="icon-tile icon-tile--cyan"><svg class="i"><use href="#i-mic"/></svg></span><b>Tu voz clonada</b><small>Suena como tú, en el idioma de la reunión.</small></li>
+        <li class="feature"><span class="icon-tile icon-tile--violet"><svg class="i"><use href="#i-languages"/></svg></span><b>Traducción con contexto</b><small>Recuerda la conversación y tu glosario.</small></li>
+        <li class="feature"><span class="icon-tile icon-tile--pink"><svg class="i"><use href="#i-video"/></svg></span><b>Cámara sincronizada</b><small>Video y voz doblada llegan a la vez.</small></li>
+      </ul>
+      <div class="actions">
+        <span class="hint" id="welcomeHint"></span>
+        <button class="btn btn--brand" data-go="license" id="welcomeCta">Comenzar<svg class="i"><use href="#i-arrow"/></svg></button>
+      </div>
+    </section>
+
+    <!-- 2 · Licencia y privacidad -->
+    <section class="screen" data-screen="license">
+      <p class="eyebrow">Paso 2 de 4</p>
+      <h2 class="title">Licencia y privacidad</h2>
+      <div class="doc" tabindex="0">
+        <article class="doc__block">
+          <h3><span class="icon-tile icon-tile--sm icon-tile--violet"><svg class="i"><use href="#i-file"/></svg></span>Licencia de uso</h3>
+          <p>VOXORA Meet es software de VOXORA. Te damos una licencia personal, no exclusiva e intransferible para instalarlo y usarlo en tus equipos. No está permitido descompilarlo, modificarlo, redistribuirlo ni revenderlo. Se ofrece «tal cual»: VOXORA no responde por daños indirectos derivados de su uso.</p>
+          <p>El doblaje usa servicios de terceros (Groq y ElevenLabs) con tus propias claves; su uso se rige también por sus condiciones.</p>
+        </article>
+        <article class="doc__block">
+          <h3><span class="icon-tile icon-tile--sm icon-tile--cyan"><svg class="i"><use href="#i-shield"/></svg></span>Tu privacidad</h3>
+          <ul class="checks">
+            <li><svg class="i"><use href="#i-key"/></svg><span>Tus API keys se guardan <b>cifradas en este equipo</b> (DPAPI de Windows) y solo viajan a Groq y ElevenLabs.</span></li>
+            <li><svg class="i"><use href="#i-mic"/></svg><span>Tu voz se envía a Groq (transcripción y traducción) y a ElevenLabs (voz) <b>solo mientras doblas</b>. VOXORA no la guarda.</span></li>
+            <li><svg class="i"><use href="#i-video"/></svg><span>Tu cámara se procesa <b>en tu equipo</b>: la cámara virtual no sale a internet.</span></li>
+            <li><svg class="i"><use href="#i-cloud"/></svg><span>Sin telemetría. Aparte de esos proveedores, la app solo consulta el canal de actualizaciones de VOXORA.</span></li>
+            <li><svg class="i"><use href="#i-file"/></svg><span>Los registros de diagnóstico quedan en tu equipo (<span class="mono">%LOCALAPPDATA%\VOXORA Meet\logs</span>) y no se envían.</span></li>
+          </ul>
+        </article>
+      </div>
+      <label class="check" id="acceptRow">
+        <input type="checkbox" id="accept">
+        <span class="check__box"><svg class="i"><use href="#i-check"/></svg></span>
+        <span>He leído y acepto la licencia y la política de privacidad.</span>
+      </label>
+      <div class="actions">
+        <button class="btn btn--ghost" data-go="welcome"><svg class="i"><use href="#i-back"/></svg>Atrás</button>
+        <button class="btn btn--brand" data-go="location" id="acceptCta" disabled>Aceptar y continuar<svg class="i"><use href="#i-arrow"/></svg></button>
+      </div>
+    </section>
+
+    <!-- 3 · Ubicación -->
+    <section class="screen" data-screen="location">
+      <p class="eyebrow">Paso 3 de 4</p>
+      <h2 class="title">¿Dónde lo instalamos?</h2>
+      <p class="lead lead--sm">Recomendamos la carpeta de programas: ahí la cámara virtual de Windows puede leer sus archivos sin permisos extra.</p>
+      <div class="path">
+        <span class="icon-tile icon-tile--violet"><svg class="i"><use href="#i-folder"/></svg></span>
+        <div class="path__text"><small>Carpeta de instalación</small><span class="mono" id="dirText">C:\Program Files\VOXORA Meet</span></div>
+        <button class="btn btn--glass btn--sm" data-act="browse">Cambiar…</button>
+      </div>
+      <div class="stats">
+        <div class="stat"><small>Espacio necesario</small><b id="needText">—</b></div>
+        <div class="stat"><small>Disponible</small><b id="freeText">—</b></div>
+        <div class="stat"><small>Incluye</small><b>App · motor · cámara virtual</b></div>
+      </div>
+      <p class="note" id="dirNote" hidden></p>
+      <div class="toggles">
+        <label class="toggle"><input type="checkbox" id="desktop" checked><span class="toggle__track"><span class="toggle__thumb"></span></span><span>Acceso directo en el escritorio</span></label>
+        <label class="toggle is-locked"><input type="checkbox" checked disabled><span class="toggle__track"><span class="toggle__thumb"></span></span><span>Acceso en el menú Inicio</span></label>
+      </div>
+      <div class="actions">
+        <button class="btn btn--ghost" data-go="license"><svg class="i"><use href="#i-back"/></svg>Atrás</button>
+        <button class="btn btn--brand" data-act="install" id="installCta">Instalar<svg class="i"><use href="#i-arrow"/></svg></button>
+      </div>
+    </section>
+
+    <!-- 4 · Progreso (instalar y desinstalar) -->
+    <section class="screen" data-screen="progress">
+      <div class="progress">
+        <div class="ring">
+          <svg viewBox="0 0 160 160" aria-hidden="true">
+            <defs>
+              <linearGradient id="ringGrad" x1="0" y1="0" x2="1" y2="1">
+                <stop offset="0" stop-color="#22D3EE"/><stop offset=".55" stop-color="#8B5CF6"/><stop offset="1" stop-color="#EC4899"/>
+              </linearGradient>
+            </defs>
+            <circle class="ring__track" cx="80" cy="80" r="68"/>
+            <circle class="ring__bar" id="ringBar" cx="80" cy="80" r="68"/>
+          </svg>
+          <div class="ring__label"><b id="pctText">0</b><small>%</small></div>
+          <div class="ring__glow"></div>
+        </div>
+        <div class="progress__side">
+          <p class="eyebrow" id="progEyebrow">Paso 4 de 4</p>
+          <h2 class="title" id="progTitle">Instalando VOXORA Meet</h2>
+          <p class="lead lead--sm detail" id="progDetail">Preparando…</p>
+          <ol class="phases" id="phases"></ol>
+        </div>
+      </div>
+      <div class="wave wave--wide" aria-hidden="true" id="progressWave"></div>
+    </section>
+
+    <!-- 5 · Listo -->
+    <section class="screen" data-screen="done">
+      <div class="done">
+        <div class="success" aria-hidden="true">
+          <svg viewBox="0 0 96 96"><defs><linearGradient id="okGrad" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#22D3EE"/><stop offset=".55" stop-color="#8B5CF6"/><stop offset="1" stop-color="#EC4899"/></linearGradient></defs>
+            <circle cx="48" cy="48" r="44" fill="url(#okGrad)"/><path class="success__check" d="M30 49.5 42.5 62 67 36"/></svg>
+          <i class="burst"></i>
+        </div>
+        <div>
+          <p class="eyebrow" id="doneEyebrow">Instalación completada</p>
+          <h1 class="display display--sm" id="doneTitle">Todo listo.</h1>
+          <p class="lead lead--sm" id="doneLead">VOXORA Meet quedó instalado.</p>
+        </div>
+      </div>
+      <div class="cards" id="doneCards">
+        <div class="card" id="camCard">
+          <span class="icon-tile icon-tile--cyan"><svg class="i"><use href="#i-video"/></svg></span>
+          <div><b>Cámara virtual</b><small id="camText">«VOXORA Meet Camera» registrada.</small></div>
+          <span class="badge" id="camBadge">Lista</span>
+        </div>
+        <div class="card" id="micCard">
+          <span class="icon-tile icon-tile--violet"><svg class="i"><use href="#i-mic"/></svg></span>
+          <div><b>Micrófono virtual</b><small id="micText">—</small></div>
+          <button class="link" id="micLink" data-url="https://vb-audio.com/Cable/" hidden>Cómo obtenerlo<svg class="i"><use href="#i-external"/></svg></button>
+          <span class="badge" id="micBadge">—</span>
+        </div>
+      </div>
+      <p class="note" id="rebootNote" hidden>Algunos archivos de la versión anterior estaban en uso y se borrarán al reiniciar Windows.</p>
+      <div class="actions">
+        <label class="check check--inline" id="launchRow">
+          <input type="checkbox" id="launch" checked>
+          <span class="check__box"><svg class="i"><use href="#i-check"/></svg></span>
+          <span>Abrir VOXORA Meet</span>
+        </label>
+        <button class="btn btn--brand" data-act="finish" id="finishCta">Finalizar</button>
+      </div>
+    </section>
+
+    <!-- Error -->
+    <section class="screen" data-screen="error">
+      <div class="error">
+        <span class="icon-tile icon-tile--lg icon-tile--danger"><svg class="i"><use href="#i-alert"/></svg></span>
+        <p class="eyebrow">Algo salió mal</p>
+        <h2 class="title" id="errTitle">No se pudo completar la instalación</h2>
+        <p class="lead lead--sm" id="errText">—</p>
+        <p class="note">Tus datos no se tocaron. Puedes volver a abrir el instalador; si se repite, envía el registro a soporte de VOXORA.</p>
+      </div>
+      <div class="actions">
+        <button class="btn btn--ghost" data-act="openLog"><svg class="i"><use href="#i-file"/></svg>Ver registro</button>
+        <button class="btn btn--glass" data-act="close">Cerrar</button>
+      </div>
+    </section>
+
+    <!-- Desinstalar -->
+    <section class="screen" data-screen="uninstall">
+      <p class="eyebrow">Desinstalar</p>
+      <h1 class="display display--sm">Desinstalar <span class="grad">VOXORA Meet</span></h1>
+      <p class="lead">Se quitarán la aplicación, la cámara virtual «VOXORA Meet Camera» y los accesos directos. Tus ajustes y voces grabadas se conservan para cuando vuelvas.</p>
+      <div class="path">
+        <span class="icon-tile icon-tile--violet"><svg class="i"><use href="#i-folder"/></svg></span>
+        <div class="path__text"><small>Instalado en</small><span class="mono" id="uninstallDir">—</span></div>
+      </div>
+      <label class="check check--danger">
+        <input type="checkbox" id="purge">
+        <span class="check__box"><svg class="i"><use href="#i-check"/></svg></span>
+        <span>Borrar también mis datos: ajustes, API keys cifradas, voces grabadas y registros.</span>
+      </label>
+      <div class="actions">
+        <button class="btn btn--ghost" data-act="close">Cancelar</button>
+        <button class="btn btn--danger" data-act="uninstall"><svg class="i"><use href="#i-trash"/></svg>Desinstalar</button>
+      </div>
+    </section>
+  </main>
+</div>
+<script>/*@JS@*/</script>
+</body>
+</html>

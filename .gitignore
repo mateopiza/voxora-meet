@@ -1,0 +1,28 @@
+# Dependencias
+node_modules/
+vendor/
+
+# Artefactos de build y binarios compilados
+dist/
+.cache/
+app/native-shell/bin/
+app/native-shell/build/
+capture/native/bin/
+installer/bin/
+installer/build/obj/
+windows-camera/native/bin/
+windows-driver/native/bin/
+
+# Entornos y claves secretas
+.env
+.env.local
+.env*.local
+*.pem
+*.key
+credentials.json
+
+# Sistema operativo y editores
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

@@ -1,0 +1,6 @@
+// VERSIONINFO de wasapi-render.exe (versión: native-common/voxora_version.h, desde package.json).
+#pragma code_page(65001)
+#define VX_FILE_DESCRIPTION "VOXORA Meet · salida del doblaje (WASAPI)"
+#define VX_INTERNAL_NAME "wasapi-render"
+#define VX_ORIGINAL_FILENAME "wasapi-render.exe"
+#include "voxora_version.rc"

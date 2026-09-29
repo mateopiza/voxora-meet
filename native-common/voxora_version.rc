@@ -1,0 +1,42 @@
+// Bloque VERSIONINFO común a todos los binarios de VOXORA Meet.
+// La versión sale de voxora_version.h (generado desde package.json por scripts/stamp-version.mjs).
+// Cada binario define antes de incluir este archivo:
+//   VX_FILE_DESCRIPTION   "texto"          (obligatorio)
+//   VX_INTERNAL_NAME      "nombre"         (obligatorio)
+//   VX_ORIGINAL_FILENAME  "archivo.exe"    (obligatorio)
+//   VX_FILETYPE           VFT_APP | VFT_DLL (opcional, VFT_APP por defecto)
+#include <winver.h>
+#include "voxora_version.h"
+
+#ifndef VX_FILETYPE
+#define VX_FILETYPE VFT_APP
+#endif
+
+VS_VERSION_INFO VERSIONINFO
+ FILEVERSION VOXORA_VERSION_RC
+ PRODUCTVERSION VOXORA_VERSION_RC
+ FILEFLAGSMASK 0x3fL
+ FILEFLAGS 0x0L
+ FILEOS VOS_NT_WINDOWS32
+ FILETYPE VX_FILETYPE
+ FILESUBTYPE VFT2_UNKNOWN
+BEGIN
+  BLOCK "StringFileInfo"
+  BEGIN
+    BLOCK "0c0a04b0"
+    BEGIN
+      VALUE "CompanyName", VOXORA_COMPANY
+      VALUE "FileDescription", VX_FILE_DESCRIPTION
+      VALUE "FileVersion", VOXORA_VERSION_STR
+      VALUE "InternalName", VX_INTERNAL_NAME
+      VALUE "LegalCopyright", VOXORA_COPYRIGHT
+      VALUE "OriginalFilename", VX_ORIGINAL_FILENAME
+      VALUE "ProductName", VOXORA_PRODUCT
+      VALUE "ProductVersion", VOXORA_VERSION_STR
+    END
+  END
+  BLOCK "VarFileInfo"
+  BEGIN
+    VALUE "Translation", 0x0c0a, 1200
+  END
+END

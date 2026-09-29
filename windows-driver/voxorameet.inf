@@ -1,0 +1,169 @@
+;
+; voxorameet.inf — VOXORA Meet Virtual Audio (cable de audio virtual WaveRT)
+;
+; Dispositivo root-enumerado (ROOT\VOXORAMEET) de clase MEDIA con dos
+; endpoints: "VOXORA Meet Speaker" (render) y "VOXORA Meet Microphone"
+; (captura). Solo x64. Los nombres de referencia (%KSNAME_*%) deben coincidir
+; con PcRegisterSubdevice en src/adapter.cpp.
+;
+; Validar con:  infverif /v /w voxorameet.inf   (WDK)
+;
+
+[Version]
+Signature   = "$WINDOWS NT$"
+Class       = MEDIA
+ClassGuid   = {4d36e96c-e325-11ce-bfc1-08002be10318}
+Provider    = %ProviderName%
+CatalogFile = voxorameet.cat
+DriverVer   = 09/28/2026,1.0.0.0
+PnpLockdown = 1
+
+[DestinationDirs]
+DefaultDestDir = 13    ; DriverStore (Windows 10 1709+)
+
+[SourceDisksNames]
+1 = %DiskName%,,,""
+
+[SourceDisksFiles]
+voxorameet.sys = 1
+
+; ---------------------------------------------------------------------------
+; Modelos
+; ---------------------------------------------------------------------------
+
+; TargetOSVersion NTamd64.10.0...19041 = Windows 10 2004 (build 19041) o
+; superior, x64. Motivos: (1) DIRID 13 (ejecutar desde el DriverStore) exige
+; 10.0.16299+ (InfVerif 1199); (2) el driver importa ExAllocatePool2, que solo
+; existe desde Windows 10 2004: en builds anteriores no cargaría.
+[Manufacturer]
+%MfgName% = VoxoraMeet,NTamd64.10.0...19041
+
+[VoxoraMeet.NTamd64.10.0...19041]
+%VoxoraMeet.DeviceDesc% = VoxoraMeet_Device, ROOT\VOXORAMEET
+
+; ---------------------------------------------------------------------------
+; Instalación del dispositivo
+; ---------------------------------------------------------------------------
+
+[VoxoraMeet_Device.NT]
+Include   = ks.inf, wdmaudio.inf
+Needs     = KS.Registration, WDMAUDIO.Registration
+CopyFiles = VoxoraMeet_Device.CopyFiles
+AddReg    = VoxoraMeet_Device.AddReg
+
+[VoxoraMeet_Device.CopyFiles]
+voxorameet.sys
+
+[VoxoraMeet_Device.AddReg]
+; Nombres de pin propios (KSPIN_DESCRIPTOR.Name -> MediaCategories). Así el
+; panel de sonido muestra "VOXORA Meet Speaker" / "VOXORA Meet Microphone"
+; en lugar de los genéricos "Altavoces" / "Micrófono".
+HKLM, SYSTEM\CurrentControlSet\Control\MediaCategories\%KSNAME_VOXORA_SPEAKER%,    Name,    ,           %VoxoraMeet.Speaker.PinName%
+HKLM, SYSTEM\CurrentControlSet\Control\MediaCategories\%KSNAME_VOXORA_SPEAKER%,    Display, 0x00010001, 1
+HKLM, SYSTEM\CurrentControlSet\Control\MediaCategories\%KSNAME_VOXORA_MICROPHONE%, Name,    ,           %VoxoraMeet.Microphone.PinName%
+HKLM, SYSTEM\CurrentControlSet\Control\MediaCategories\%KSNAME_VOXORA_MICROPHONE%, Display, 0x00010001, 1
+
+; ---------------------------------------------------------------------------
+; Interfaces KS (una por subdispositivo y categoría)
+; ---------------------------------------------------------------------------
+
+[VoxoraMeet_Device.NT.Interfaces]
+; Render
+AddInterface = %KSCATEGORY_AUDIO%,    %KSNAME_WaveSpeaker%,     VoxoraMeet.I.WaveSpeaker
+AddInterface = %KSCATEGORY_RENDER%,   %KSNAME_WaveSpeaker%,     VoxoraMeet.I.WaveSpeaker
+AddInterface = %KSCATEGORY_REALTIME%, %KSNAME_WaveSpeaker%,     VoxoraMeet.I.WaveSpeaker
+AddInterface = %KSCATEGORY_AUDIO%,    %KSNAME_TopologySpeaker%, VoxoraMeet.I.TopologySpeaker
+AddInterface = %KSCATEGORY_TOPOLOGY%, %KSNAME_TopologySpeaker%, VoxoraMeet.I.TopologySpeaker
+; Capture
+AddInterface = %KSCATEGORY_AUDIO%,    %KSNAME_WaveMicrophone%,     VoxoraMeet.I.WaveMicrophone
+AddInterface = %KSCATEGORY_CAPTURE%,  %KSNAME_WaveMicrophone%,     VoxoraMeet.I.WaveMicrophone
+AddInterface = %KSCATEGORY_REALTIME%, %KSNAME_WaveMicrophone%,     VoxoraMeet.I.WaveMicrophone
+AddInterface = %KSCATEGORY_AUDIO%,    %KSNAME_TopologyMicrophone%, VoxoraMeet.I.TopologyMicrophone
+AddInterface = %KSCATEGORY_TOPOLOGY%, %KSNAME_TopologyMicrophone%, VoxoraMeet.I.TopologyMicrophone
+
+[VoxoraMeet.I.WaveSpeaker]
+AddReg = VoxoraMeet.I.WaveSpeaker.AddReg
+
+[VoxoraMeet.I.WaveSpeaker.AddReg]
+HKR,, CLSID,,        %Proxy.CLSID%
+HKR,, FriendlyName,, %VoxoraMeet.WaveSpeaker.szPname%
+
+[VoxoraMeet.I.TopologySpeaker]
+AddReg = VoxoraMeet.I.TopologySpeaker.AddReg
+
+[VoxoraMeet.I.TopologySpeaker.AddReg]
+HKR,, CLSID,,        %Proxy.CLSID%
+HKR,, FriendlyName,, %VoxoraMeet.TopologySpeaker.szPname%
+; Propiedades del endpoint: asociación con cualquier nodo y modo event-driven
+; (pull mode WaveRT con IMiniportWaveRTStreamNotification).
+HKR, EP\0, %PKEY_AudioEndpoint_Association%,,                          %KSNODETYPE_ANY%
+HKR, EP\0, %PKEY_AudioEndpoint_Supports_EventDriven_Mode%, 0x00010001, 0x1
+
+[VoxoraMeet.I.WaveMicrophone]
+AddReg = VoxoraMeet.I.WaveMicrophone.AddReg
+
+[VoxoraMeet.I.WaveMicrophone.AddReg]
+HKR,, CLSID,,        %Proxy.CLSID%
+HKR,, FriendlyName,, %VoxoraMeet.WaveMicrophone.szPname%
+
+[VoxoraMeet.I.TopologyMicrophone]
+AddReg = VoxoraMeet.I.TopologyMicrophone.AddReg
+
+[VoxoraMeet.I.TopologyMicrophone.AddReg]
+HKR,, CLSID,,        %Proxy.CLSID%
+HKR,, FriendlyName,, %VoxoraMeet.TopologyMicrophone.szPname%
+HKR, EP\0, %PKEY_AudioEndpoint_Association%,,                          %KSNODETYPE_ANY%
+HKR, EP\0, %PKEY_AudioEndpoint_Supports_EventDriven_Mode%, 0x00010001, 0x1
+
+; ---------------------------------------------------------------------------
+; Servicio
+; ---------------------------------------------------------------------------
+
+[VoxoraMeet_Device.NT.Services]
+AddService = voxorameet, 0x00000002, VoxoraMeet_Service_Inst
+
+[VoxoraMeet_Service_Inst]
+DisplayName   = %VoxoraMeet.SvcDesc%
+ServiceType   = 1      ; SERVICE_KERNEL_DRIVER
+StartType     = 3      ; SERVICE_DEMAND_START (PnP lo arranca)
+ErrorControl  = 1      ; SERVICE_ERROR_NORMAL
+ServiceBinary = %13%\voxorameet.sys
+
+; ---------------------------------------------------------------------------
+; Cadenas
+; ---------------------------------------------------------------------------
+
+[Strings]
+ProviderName                        = "VOXORA"
+MfgName                             = "VOXORA"
+DiskName                            = "VOXORA Meet Virtual Audio Installation Disk"
+VoxoraMeet.DeviceDesc               = "VOXORA Meet Virtual Audio"
+VoxoraMeet.SvcDesc                  = "VOXORA Meet Virtual Audio Driver"
+
+VoxoraMeet.WaveSpeaker.szPname      = "VOXORA Meet Speaker"
+VoxoraMeet.TopologySpeaker.szPname  = "VOXORA Meet Speaker"
+VoxoraMeet.WaveMicrophone.szPname   = "VOXORA Meet Microphone"
+VoxoraMeet.TopologyMicrophone.szPname = "VOXORA Meet Microphone"
+VoxoraMeet.Speaker.PinName          = "VOXORA Meet Speaker"
+VoxoraMeet.Microphone.PinName       = "VOXORA Meet Microphone"
+
+; Cadenas de referencia = nombres de PcRegisterSubdevice (src/common.h)
+KSNAME_WaveSpeaker                  = "WaveSpeaker"
+KSNAME_TopologySpeaker              = "TopologySpeaker"
+KSNAME_WaveMicrophone               = "WaveMicrophone"
+KSNAME_TopologyMicrophone           = "TopologyMicrophone"
+
+; GUIDs propios (src/guids.h)
+KSNAME_VOXORA_SPEAKER               = "{41C0553A-7829-48E5-A2FA-43867BAB3D06}"
+KSNAME_VOXORA_MICROPHONE            = "{B4FC850B-F02A-4AF0-B4C6-521D3F5C89FF}"
+
+; GUIDs del sistema (ks.h / ksmedia.h / mmdeviceapi.h)
+Proxy.CLSID                         = "{17CCA71B-ECD7-11D0-B908-00A0C9223196}"
+KSCATEGORY_AUDIO                    = "{6994AD04-93EF-11D0-A3CC-00A0C9223196}"
+KSCATEGORY_RENDER                   = "{65E8773E-8F56-11D0-A3B9-00A0C9223196}"
+KSCATEGORY_CAPTURE                  = "{65E8773D-8F56-11D0-A3B9-00A0C9223196}"
+KSCATEGORY_REALTIME                 = "{EB115FFC-10C8-4964-831D-6DCB02E6F23F}"
+KSCATEGORY_TOPOLOGY                 = "{DDA54A40-1E4C-11D1-A050-405705C10000}"
+KSNODETYPE_ANY                      = "{00000000-0000-0000-0000-000000000000}"
+PKEY_AudioEndpoint_Association      = "{1DA5D803-D492-4EDD-8C23-E0C0FFEE7F0E},2"
+PKEY_AudioEndpoint_Supports_EventDriven_Mode = "{1DA5D803-D492-4EDD-8C23-E0C0FFEE7F0E},7"

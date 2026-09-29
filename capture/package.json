@@ -1,0 +1,19 @@
+{
+  "name": "@voxora-meet/capture",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Captura de micrófono (WASAPI) + segmentación por frase (VAD adaptativo con endpointing por silencio) para VOXORA Meet.",
+  "license": "UNLICENSED",
+  "engines": { "node": ">=22" },
+  "exports": {
+    ".": "./src/index.mjs",
+    "./mic-capture": "./src/mic-capture.mjs",
+    "./phrase-segmenter": "./src/phrase-segmenter.mjs",
+    "./resample": "./src/resample.mjs"
+  },
+  "scripts": {
+    "test": "node --test \"src/**/*.test.mjs\"",
+    "build:native": "cmd /c native\\build.cmd"
+  }
+}

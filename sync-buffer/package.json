@@ -1,0 +1,16 @@
+{
+  "name": "@voxora-meet/sync-buffer",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Cola de delay que sincroniza frames de cámara con el audio doblado (M5).",
+  "main": "src/sync-buffer.mjs",
+  "exports": {
+    ".": "./src/sync-buffer.mjs",
+    "./resampler": "./src/resampler.mjs"
+  },
+  "engines": { "node": ">=22" },
+  "scripts": {
+    "test": "node --test \"test/**/*.test.mjs\""
+  }
+}

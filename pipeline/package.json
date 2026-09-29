@@ -1,0 +1,23 @@
+{
+  "name": "@voxora-meet/pipeline",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Pipeline de doblaje de VOXORA Meet: STT Groq Whisper → traducción con contexto (Groq) → TTS ElevenLabs con voz clonada.",
+  "main": "src/index.mjs",
+  "exports": {
+    ".": "./src/index.mjs",
+    "./stt": "./src/stt/groq-whisper.mjs",
+    "./translate": "./src/translate/groq-translate.mjs",
+    "./tts": "./src/tts/elevenlabs.mjs",
+    "./stores": "./src/stores.mjs",
+    "./voice-onboarding": "./src/voice-onboarding.mjs"
+  },
+  "engines": { "node": ">=22" },
+  "scripts": {
+    "test": "node --test \"src/**/*.test.mjs\""
+  },
+  "dependencies": {
+    "@voxora-meet/billing": "*"
+  }
+}

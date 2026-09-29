@@ -1,0 +1,11 @@
+# windows-driver — artefactos locales (no vendorizar)
+
+# WDK/SDK extraídos de NuGet por build-driver.cmd (≈ 1.5 GB)
+.wdk/
+
+# Salidas de build-driver.cmd y de msbuild
+out/
+build/
+
+# Artefactos del helper nativo
+native/obj/

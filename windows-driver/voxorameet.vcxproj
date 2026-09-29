@@ -1,0 +1,119 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  voxorameet.vcxproj — Driver PortCls/WaveRT de VOXORA Meet.
+  Requiere: Visual Studio 2022/2026 + WDK 10.0.26100 (toolset
+  WindowsKernelModeDriver10.0). Driver WDM puro (PortCls no usa KMDF).
+  Salida: build\<Platform>\<Configuration>\voxorameet\ (sys, inf, cat, pdb).
+-->
+<Project DefaultTargets="Build" ToolsVersion="12.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup Label="ProjectConfigurations">
+    <ProjectConfiguration Include="Debug|x64">
+      <Configuration>Debug</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="Release|x64">
+      <Configuration>Release</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+  </ItemGroup>
+
+  <PropertyGroup Label="Globals">
+    <ProjectGuid>{528A7BA1-9002-4D14-9015-00538EB0DB3B}</ProjectGuid>
+    <TargetFrameworkVersion>v4.5</TargetFrameworkVersion>
+    <MinimumVisualStudioVersion>12.0</MinimumVisualStudioVersion>
+    <Configuration>Debug</Configuration>
+    <Platform Condition="'$(Platform)' == ''">x64</Platform>
+    <RootNamespace>voxorameet</RootNamespace>
+    <ProjectName>voxorameet</ProjectName>
+    <DriverType>WDM</DriverType>
+    <DriverTargetPlatform>Desktop</DriverTargetPlatform>
+    <!-- NTDDI_VERSION = NTDDI_WIN10_VB (Windows 10 2004, build 19041): mínimo
+         real del driver (ExAllocatePool2) y el mismo que usa build-driver.cmd.
+         Sin esto el WDK 26100 usaría 0xA000010 (Windows 11 24H2). -->
+    <_NT_TARGET_VERSION>0xA000008</_NT_TARGET_VERSION>
+    <WindowsTargetPlatformVersion>$(LatestTargetPlatformVersion)</WindowsTargetPlatformVersion>
+  </PropertyGroup>
+
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
+
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'" Label="Configuration">
+    <TargetVersion>Windows10</TargetVersion>
+    <UseDebugLibraries>true</UseDebugLibraries>
+    <PlatformToolset>WindowsKernelModeDriver10.0</PlatformToolset>
+    <ConfigurationType>Driver</ConfigurationType>
+    <DriverType>WDM</DriverType>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'" Label="Configuration">
+    <TargetVersion>Windows10</TargetVersion>
+    <UseDebugLibraries>false</UseDebugLibraries>
+    <PlatformToolset>WindowsKernelModeDriver10.0</PlatformToolset>
+    <ConfigurationType>Driver</ConfigurationType>
+    <DriverType>WDM</DriverType>
+  </PropertyGroup>
+
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
+  <ImportGroup Label="ExtensionSettings" />
+  <ImportGroup Label="PropertySheets">
+    <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
+  </ImportGroup>
+  <PropertyGroup Label="UserMacros" />
+
+  <PropertyGroup>
+    <DebuggerFlavor>DbgengKernelDebugger</DebuggerFlavor>
+    <TargetName>voxorameet</TargetName>
+    <OutDir>$(ProjectDir)build\$(Platform)\$(Configuration)\</OutDir>
+    <IntDir>$(ProjectDir)build\obj\$(Platform)\$(Configuration)\</IntDir>
+    <!-- Inf2Cat: catálogo para Windows 10/11 x64. -->
+    <Inf2CatUseLocalTime>true</Inf2CatUseLocalTime>
+  </PropertyGroup>
+
+  <ItemDefinitionGroup>
+    <ClCompile>
+      <WarningLevel>Level4</WarningLevel>
+      <AdditionalIncludeDirectories>$(ProjectDir)src;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <!-- Sin excepciones ni RTTI en kernel (el toolset ya lo impone; explícito por claridad). -->
+      <ExceptionHandling>false</ExceptionHandling>
+      <RuntimeTypeInfo>false</RuntimeTypeInfo>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+    </ClCompile>
+    <Link>
+      <!--
+        portcls.lib : PcInitializeAdapterDriver, PcNewPort, PcRegisterSubdevice...
+        stdunk.lib  : CUnknown / operator new de pool
+        ksguid.lib  : KSCATEGORY_*, KSNODETYPE_*, KSDATAFORMAT_*...
+        libcntpr.lib: rutinas CRT mínimas (memset/memcpy que emite el compilador)
+      -->
+      <AdditionalDependencies>$(DDK_LIB_PATH)portcls.lib;$(DDK_LIB_PATH)stdunk.lib;$(DDK_LIB_PATH)ksguid.lib;$(DDK_LIB_PATH)libcntpr.lib;%(AdditionalDependencies)</AdditionalDependencies>
+    </Link>
+    <ResourceCompile>
+      <AdditionalIncludeDirectories>$(ProjectDir)src;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+    </ResourceCompile>
+    <Inf>
+      <!-- stampinf sustituye DriverVer con la fecha de build; la versión va aquí. -->
+      <TimeStamp>1.0.0.0</TimeStamp>
+    </Inf>
+  </ItemDefinitionGroup>
+
+  <ItemGroup>
+    <ClCompile Include="src\adapter.cpp" />
+    <ClCompile Include="src\loopback.cpp" />
+    <ClCompile Include="src\mintopo.cpp" />
+    <ClCompile Include="src\minwavert.cpp" />
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="src\common.h" />
+    <ClInclude Include="src\guids.h" />
+    <ClInclude Include="src\loopback.h" />
+    <ClInclude Include="src\mintopo.h" />
+    <ClInclude Include="src\minwavert.h" />
+  </ItemGroup>
+  <ItemGroup>
+    <ResourceCompile Include="src\voxorameet.rc" />
+  </ItemGroup>
+  <ItemGroup>
+    <Inf Include="voxorameet.inf" />
+  </ItemGroup>
+
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
+  <ImportGroup Label="ExtensionTargets" />
+</Project>

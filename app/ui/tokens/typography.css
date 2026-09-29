@@ -1,0 +1,65 @@
+/* VØXORA Live — Typography tokens */
+
+:root {
+  --font-sans: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-display: "Space Grotesk", "Inter", sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+
+  /* Size scale (px equivalent noted) */
+  --text-9: 0.5625rem;   /*  9px  — micro legal */
+  --text-10: 0.625rem;   /* 10px — eyebrow / uppercase caption */
+  --text-11: 0.6875rem;  /* 11px — meta */
+  --text-xs: 0.75rem;    /* 12px — small body */
+  --text-sm: 0.875rem;   /* 14px — body default */
+  --text-base: 1rem;     /* 16px */
+  --text-lg: 1.125rem;   /* 18px */
+  --text-xl: 1.25rem;    /* 20px — card titles */
+  --text-2xl: 1.5rem;    /* 24px */
+  --text-3xl: 1.875rem;  /* 30px */
+  --text-4xl: 2.25rem;   /* 36px — hero on mobile */
+  --text-5xl: 3rem;      /* 48px */
+  --text-6xl: 3.75rem;   /* 60px — hero on desktop */
+
+  /* Weight — Space Grotesk & Inter both 400/500/600/700 */
+  --weight-light: 300;
+  --weight-normal: 400;
+  --weight-medium: 500;
+  --weight-semibold: 600;
+  --weight-bold: 700;
+  --weight-black: 900;
+
+  /* Line height */
+  --leading-none: 1;
+  --leading-tight: 1.15;
+  --leading-snug: 1.35;
+  --leading-normal: 1.5;
+  --leading-relaxed: 1.65;
+
+  /* Tracking — VØXORA loves uppercase widetrack */
+  --tracking-tight: -0.02em;
+  --tracking-normal: 0;
+  --tracking-wide: 0.05em;
+  --tracking-wider: 0.1em;
+  --tracking-widest: 0.2em;
+  --tracking-eyebrow: 0.3em;   /* 10px eyebrow labels */
+  --tracking-mono-eyebrow: 0.35em;
+
+  /* Semantic — the VØXORA wordmark is always font-light + wide tracking */
+  --type-wordmark-tracking: 0.2em;
+  --type-wordmark-weight: 300;
+
+  /* Semantic aliases used by components */
+  --type-eyebrow-size: var(--text-10);
+  --type-eyebrow-weight: var(--weight-bold);
+  --type-eyebrow-tracking: var(--tracking-eyebrow);
+
+  --type-hero-weight: var(--weight-light);
+  --type-hero-accent-weight: var(--weight-semibold);
+  --type-hero-tracking: var(--tracking-tight);
+
+  --type-h2-weight: var(--weight-light);
+  --type-card-title-weight: var(--weight-bold);
+
+  --type-cta-weight: var(--weight-bold);
+  --type-cta-tracking: var(--tracking-widest);
+}

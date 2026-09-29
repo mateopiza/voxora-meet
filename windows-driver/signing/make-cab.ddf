@@ -1,0 +1,32 @@
+; make-cab.ddf — Directiva de makecab para el paquete de atestación de
+; voxorameet.sys (Microsoft Partner Center → Hardware).
+;
+; Uso: lo ejecuta build-driver.cmd (Release) desde windows-driver\signing:
+;   makecab /f make-cab.ddf
+; Genera ..\out\cab\voxorameet.cab con la carpeta interna "voxorameet\" que
+; contiene inf + sys + pdb. El .cat NO se incluye: Microsoft genera y firma
+; su propio catálogo al procesar la atestación (el .cat local de inf2cat solo
+; sirve para pruebas con testsigning).
+;
+; Rutas relativas al directorio desde el que se ejecuta makecab (signing\).
+
+.OPTION EXPLICIT
+.Set CabinetFileCountThreshold=0
+.Set FolderFileCountThreshold=0
+.Set FolderSizeThreshold=0
+.Set MaxCabinetSize=0
+.Set MaxDiskFileCount=0
+.Set MaxDiskSize=0
+.Set CompressionType=MSZIP
+.Set Cabinet=on
+.Set Compress=on
+.Set CabinetNameTemplate=voxorameet.cab
+.Set DiskDirectoryTemplate=..\out\cab
+.Set InfFileName=NUL
+.Set RptFileName=NUL
+.Set DestinationDir=voxorameet
+
+; --- Archivos del paquete (salida de build-driver.cmd Release) ---
+..\out\package\voxorameet.inf
+..\out\package\voxorameet.sys
+..\out\symbols\voxorameet.pdb

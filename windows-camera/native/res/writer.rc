@@ -1,0 +1,6 @@
+// VERSIONINFO de VoxoraMeetFrameWriter.exe (versión: native-common/voxora_version.h, desde package.json).
+#pragma code_page(65001)
+#define VX_FILE_DESCRIPTION "VOXORA Meet · escritor de frames de la cámara virtual"
+#define VX_INTERNAL_NAME "VoxoraMeetFrameWriter"
+#define VX_ORIGINAL_FILENAME "VoxoraMeetFrameWriter.exe"
+#include "voxora_version.rc"

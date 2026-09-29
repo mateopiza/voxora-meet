@@ -1,0 +1,38 @@
+// voxorameet.rc — Recurso de versión del driver VOXORA Meet.
+// Usa el esquema estándar del WDK (ntverp.h + common.ver).
+
+#include <windows.h>
+#include <ntverp.h>
+
+#undef  VER_PRODUCTNAME_STR
+#undef  VER_PRODUCTVERSION
+#undef  VER_PRODUCTVERSION_STR
+#undef  VER_COMPANYNAME_STR
+#undef  VER_LEGALCOPYRIGHT_STR
+#undef  VER_LEGALCOPYRIGHT_YEARS
+
+#define VER_FILETYPE                VFT_DRV
+#define VER_FILESUBTYPE             VFT2_DRV_SOUND
+#define VER_FILEDESCRIPTION_STR     "VOXORA Meet Virtual Audio Driver (WaveRT)"
+#define VER_INTERNALNAME_STR        "voxorameet.sys"
+#define VER_ORIGINALFILENAME_STR    "voxorameet.sys"
+
+// Versión: build-driver.cmd la pasa con /DVOXORA_VER_* (VOXORA_DRIVER_VERSION,
+// la misma que stampinf escribe en DriverVer). Por defecto 1.0.0.0.
+#ifndef VOXORA_VER_MAJOR
+#define VOXORA_VER_MAJOR            1
+#define VOXORA_VER_MINOR            0
+#define VOXORA_VER_BUILD            0
+#define VOXORA_VER_REV              0
+#endif
+#define VOXORA_STR2(x)              #x
+#define VOXORA_STR(x)               VOXORA_STR2(x)
+
+#define VER_PRODUCTNAME_STR         "VOXORA Meet"
+#define VER_PRODUCTVERSION          VOXORA_VER_MAJOR,VOXORA_VER_MINOR,VOXORA_VER_BUILD,VOXORA_VER_REV
+#define VER_PRODUCTVERSION_STR      VOXORA_STR(VOXORA_VER_MAJOR) "." VOXORA_STR(VOXORA_VER_MINOR) "." VOXORA_STR(VOXORA_VER_BUILD) "." VOXORA_STR(VOXORA_VER_REV)
+#define VER_COMPANYNAME_STR         "VOXORA"
+#define VER_LEGALCOPYRIGHT_YEARS    "2026"
+#define VER_LEGALCOPYRIGHT_STR      "Copyright (C) " VER_LEGALCOPYRIGHT_YEARS " VOXORA. Todos los derechos reservados."
+
+#include "common.ver"

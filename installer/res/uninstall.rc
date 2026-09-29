@@ -1,0 +1,13 @@
+// Recursos de VoxoraMeetUninstall.exe: el mismo programa que el instalador, sin carga útil
+// (sin argumentos desinstala). Va dentro del layout de instalación y se firma con los binarios internos.
+#pragma code_page(65001)
+#include <windows.h>
+
+101 ICON "..\\..\\app\\native-shell\\res\\voxora-meet.ico"
+1 24 "setup.manifest"
+SETUP_UI RCDATA "gen\\setup-ui.html"
+
+#define VX_FILE_DESCRIPTION "Desinstalador de VOXORA Meet"
+#define VX_INTERNAL_NAME "VoxoraMeetUninstall"
+#define VX_ORIGINAL_FILENAME "VoxoraMeetUninstall.exe"
+#include "voxora_version.rc"

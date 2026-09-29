@@ -1,0 +1,7 @@
+// VERSIONINFO de VoxoraMeetVCam.dll (versión: native-common/voxora_version.h, desde package.json).
+#pragma code_page(65001)
+#define VX_FILE_DESCRIPTION "VOXORA Meet · cámara virtual (Media Foundation)"
+#define VX_INTERNAL_NAME "VoxoraMeetVCam"
+#define VX_ORIGINAL_FILENAME "VoxoraMeetVCam.dll"
+#define VX_FILETYPE VFT_DLL
+#include "voxora_version.rc"

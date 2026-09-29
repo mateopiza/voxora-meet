@@ -1,0 +1,13 @@
+// Recursos de VoxoraMeet.exe: icono e informacion de version.
+// voxora-meet.ico = isotipo oficial VOXORA (O tachada sobre gradiente tri-brand, radio 22 %)
+// del brand sheet V1; 16/20/24/32/40/48/64/128/256 px, dibujado por tamano para que se lea en
+// 16-40 px (la ventana y la bandeja piden el tamano exacto segun los DPI del monitor).
+// La version sale del package.json raiz (native-common/voxora_version.h, scripts/stamp-version.mjs).
+#include <windows.h>
+
+101 ICON "voxora-meet.ico"
+
+#define VX_FILE_DESCRIPTION "VOXORA Meet"
+#define VX_INTERNAL_NAME "VoxoraMeet"
+#define VX_ORIGINAL_FILENAME "VoxoraMeet.exe"
+#include "voxora_version.rc"

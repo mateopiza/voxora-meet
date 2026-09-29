@@ -1,0 +1,70 @@
+/* VØXORA Live — Color tokens
+ * Extracted verbatim from src/components/AuthScreen.tsx & PlansPanel.tsx.
+ * Palette: pastel-glass lavender canvas with cyan / violet / pink orb accents. */
+
+:root {
+  /* — Brand accents (exact hex from source) — */
+  --brand-cyan: #22D3EE;      /* primary electric accent */
+  --brand-cyan-deep: #088395;  /* readable text on cyan-10 */
+  --brand-violet: #8B5CF6;    /* secondary / narrative */
+  --brand-violet-deep: #7C3AED;
+  --brand-pink: #EC4899;      /* tertiary — used sparingly (ShieldCheck, orb) */
+  --brand-amber: #F59E0B;     /* VOXORA Agent module */
+  --brand-emerald: #10B981;   /* VOXORA Cloud module / success */
+  --brand-blue: #3B82F6;      /* info / desktop-download callout */
+
+  /* — Ink / typography — */
+  --ink-void: #07060B;        /* deepest headings */
+  --ink-black: #0D0816;       /* body headings, near-black */
+  --ink-slate-800: #1E293B;
+  --ink-slate-600: #475569;
+  --ink-slate-500: #64748B;   /* secondary body */
+  --ink-slate-400: #94A3B8;   /* meta / footer */
+
+  /* — Ink alpha (semantic body / muted) — */
+  --text-primary: var(--ink-void);
+  --text-body: rgba(13, 8, 22, 0.60);
+  --text-muted: rgba(13, 8, 22, 0.55);
+  --text-quiet: rgba(13, 8, 22, 0.40);
+  --text-whisper: rgba(13, 8, 22, 0.30);
+  --text-on-accent: #FFFFFF;
+
+  /* — Canvas — */
+  --canvas: #F7F5FF;          /* app background (pastel lavender) */
+  --canvas-alt: #FBFAFF;
+
+  /* — Glass surfaces (translucent + backdrop-blur) — */
+  --glass-70: rgba(255, 255, 255, 0.70);   /* header / auth card */
+  --glass-60: rgba(255, 255, 255, 0.60);   /* CTA / plans cards */
+  --glass-50: rgba(255, 255, 255, 0.50);   /* feature cards, inputs */
+  --glass-40: rgba(255, 255, 255, 0.40);   /* subtle groupers */
+  --glass-10: rgba(255, 255, 255, 0.10);   /* on gradient buttons */
+  --glass-hairline: rgba(255, 255, 255, 0.60); /* white border on glass */
+  --glass-hairline-soft: rgba(255, 255, 255, 0.40);
+
+  /* — Divider — */
+  --divider: rgba(13, 8, 22, 0.05);
+
+  /* — Semantic — */
+  --success-bg: #ECFDF5;
+  --success-fg: #059669;
+  --success-border: #A7F3D0;
+  --danger-bg: #FEF2F2;
+  --danger-fg: #E11D48;      /* rose-600 */
+  --danger-border: #FECDD3;
+  --warning-fg: #D97706;
+  --info-bg: rgba(34, 211, 238, 0.10);
+  --info-border: rgba(34, 211, 238, 0.25);
+
+  /* — Signature gradients — */
+  --gradient-brand: linear-gradient(135deg, #22D3EE 0%, #8B5CF6 100%); /* @kind color */
+  --gradient-brand-tri: linear-gradient(90deg, #22D3EE 0%, #8B5CF6 50%, #EC4899 100%); /* @kind color */
+  --gradient-pro-card: linear-gradient(180deg, rgba(139,92,246,0.10) 0%, rgba(255,255,255,0.60) 100%); /* @kind color */
+
+  /* — Module colors (used as tint swatches in cards) — */
+  --module-voice: #22D3EE;
+  --module-studio: #8B5CF6;
+  --module-connect: #EC4899;
+  --module-agent: #F59E0B;
+  --module-cloud: #10B981;
+}

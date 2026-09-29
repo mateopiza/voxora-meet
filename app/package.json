@@ -1,0 +1,14 @@
+{
+  "name": "@voxora-meet/app",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "VOXORA Meet — motor headless (Node, JSON-lines por stdio) + shell nativo Win32 (app/native-shell).",
+  "main": "engine/engine.mjs",
+  "engines": { "node": ">=22" },
+  "scripts": {
+    "start": "node engine/engine.mjs",
+    "test": "node --test \"test/**/*.test.mjs\"",
+    "build:shell": "cmd /c native-shell\\build.cmd"
+  }
+}

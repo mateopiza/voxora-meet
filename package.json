@@ -1,0 +1,43 @@
+{
+  "name": "voxora-meet",
+  "version": "0.2.0",
+  "private": true,
+  "type": "module",
+  "description": "VOXORA Meet — doblaje profesional con voz clonada para videollamadas (Google Meet). Calidad y fidelidad de voz por encima de latencia.",
+  "author": "VOXORA",
+  "license": "UNLICENSED",
+  "engines": {
+    "node": ">=22"
+  },
+  "workspaces": [
+    "capture",
+    "pipeline",
+    "sync-buffer",
+    "billing",
+    "windows-camera",
+    "windows-driver",
+    "app"
+  ],
+  "scripts": {
+    "test": "node --test \"capture/**/*.test.mjs\" \"pipeline/**/*.test.mjs\" \"sync-buffer/**/*.test.mjs\" \"billing/**/*.test.mjs\" \"windows-camera/**/*.test.mjs\" \"app/**/*.test.mjs\" \"windows-driver/**/*.test.mjs\" \"scripts/**/*.test.mjs\"",
+    "build:native": "node scripts/build-native.mjs",
+    "test:camera-e2e": "node windows-camera/scripts/e2e-camera.mjs",
+    "start": "npm --workspace app start",
+    "check:providers": "node scripts/check-providers.mjs",
+    "smoke:pipeline": "node scripts/smoke-pipeline.mjs",
+    "sign": "node scripts/sign.mjs",
+    "stamp-version": "node scripts/stamp-version.mjs",
+    "release": "node scripts/release.mjs",
+    "verify:release": "node scripts/verify-release.mjs",
+    "publish:release": "node scripts/publish.mjs",
+    "test:update-flow": "node scripts/test-update-flow.mjs"
+  },
+  "devDependencies": {
+    "esbuild": "0.25.12",
+    "javascript-obfuscator": "5.4.3"
+  },
+  "config": {
+    "nodeRuntime": "24.21.0",
+    "updateFeed": ""
+  }
+}
