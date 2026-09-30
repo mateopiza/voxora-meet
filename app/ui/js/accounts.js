@@ -1,5 +1,5 @@
 // Cuentas de proveedores (API keys de Groq y ElevenLabs): hoja «Conecta tus cuentas» (en ambos modos) y
-// tarjeta «Cuentas» de la pestaña Avanzado. Las keys se envían al motor, que las cifra con DPAPI y nunca
+// tarjeta «Cuentas» de Avanzado › Ajustes. Las keys se envían al motor, que las cifra con DPAPI y nunca
 // las devuelve (la UI solo ve booleanos). Si falta alguna, un aviso bajo la barra superior abre la hoja.
 
 import { engine, native } from './bridge.js';

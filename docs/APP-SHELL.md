@@ -163,78 +163,100 @@ SegmentedTabs con la activa en tinta, Badge / StatTile / IconTile / Toggle del k
   Favicon: `favicon.ico` (16/24/32/48/64), `favicon.png` (32) y el SVG, enlazados en `index.html`.
 - Iconos Lucide embebidos como sprite SVG.
 
-- Barra superior: logo, pastillas de estado (motor, cámara virtual, mic virtual) con explicación y
-  acciones al pasar/enfocar/pulsar (popovers opacos; la barra lleva `z-index` propio para quedar por
-  encima de pestañas y tarjetas, que con `backdrop-filter` crean su propio contexto de apilamiento),
-  contador VOX de la sesión (StatTile).
-- **Modo Simple | Avanzado** (conmutador arriba a la izquierda, `js/mode.js`): se guarda en el ajuste
-  `uiMode` (`simple` por defecto; copia en `localStorage` para no parpadear al arrancar). Simple = dos
-  pestañas, **Reunión** y **En vivo**, con lo imprescindible y valores recomendados; Avanzado = además
-  la pestaña **Avanzado** y los controles `.adv-only` (imagen completa de la cámara, acceso a los
-  parámetros finos). `body[data-mode]` gobierna la visibilidad; pasar a Simple con la pestaña
-  Avanzado abierta vuelve a Reunión. Si faltan API keys, un aviso bajo la barra abre la hoja
-  **Cuentas** (`dialog#sheet-accounts`, en los dos modos; se cierra sola al guardar la segunda key).
-- **Reunión** (tres columnas):
-  - *Cámara y micrófono*: vista previa en vivo con `getUserMedia` (con la cámara virtual activa abre
-    «VOXORA Meet Camera», o sea lo mismo que ve Meet, efectos incluidos; si no, la webcam emparejada
-    por nombre con la cámara MF, con los efectos aproximados por CSS), selector de webcam, bloque
-    **Imagen** (Simple: espejo, voltear, 16:9 / 9:16, brillo; Avanzado: además rotación
-    0/90/180/270, zoom 1–2× con mover ↔/↕, contraste, saturación, temperatura, «Restablecer» y
-    ms/frame de `camera.stats`), micrófono (+ prueba de nivel).
-  - *Traducción*: idiomas origen/destino, voz (lista de `voices.list` con escucha de `previewUrl`,
-    `voice.set`; «Clonar mi voz» abre la hoja del asistente: tomas con temporizador y progreso hasta
-    ≥ 60 s, ideal 2–3 min, texto guía, importar archivos, consentimiento, `voice.clone` con
-    `wavPaths`/`filePaths`), modelos de transcripción / traducción / voz **sin** parámetros finos
-    (en Avanzado, enlace a «Temperatura, razonamiento, glosario y ajustes de voz»), retraso 2–6 s
-    (`delay.set` en caliente) y «Si el doblaje no llega a tiempo» (Silencio · recomendado / Mi voz en
-    <idioma> / Mi voz, bajita: las tres opciones siempre visibles de 960 a 1200 px).
-  - *Salida a Meet*: salida del doblaje (`virtualMicDevice`, recomendado «VOXORA Meet Speaker» →
-    «CABLE Input») con la ayuda de qué micrófono y cámara elegir en Meet, **Grabar prueba** (10/20/30 s,
-    cuenta atrás 3-2-1, progreso y nivel; al terminar la hoja «Así te ve y te oye Meet» reproduce el
-    MP4 desde `https://recordings.voxora-meet/…` con Abrir carpeta, Borrar y Grabar otra; funciona con
-    y sin sesión), checklist previa y botón Iniciar/Detener con estados.
-- **En vivo**: medidor de nivel, turnos original → traducción con latencia, costo y «tardío»,
-  métricas (retraso, deriva, tardíos, VOX/min, turnos, en proceso) y estado de la cámara para Meet.
-- **Avanzado** (solo modo Avanzado; la pestaña entera hace scroll con las tarjetas a su alto natural):
-  resumen de costo, las tres tarjetas de modelo con todos sus parámetros (abajo), y **Cuentas** (API
-  keys), **Dispositivos virtuales** (`cameraAlwaysOn`, escucha local `monitorDevice`) y **Límites y
-  aplicación** (VOX, versión, actualizaciones, reiniciar motor, ocultar, salir).
-- **Modelos** (dentro de Avanzado; protocolo v3, `js/models.js`): resumen de costo estimado en vivo (`cost.estimate` con
+- Barra superior: logo y conmutador **Simple | Avanzado**, pastillas de estado (motor, cámara
+  virtual, mic virtual; bajo 1180 px solo icono + estado) con explicación y acciones al
+  pasar/enfocar/pulsar (popovers opacos; la barra lleva `z-index` propio para quedar por encima de
+  pestañas y tarjetas, que con `backdrop-filter` crean su propio contexto de apilamiento), contador
+  VOX de la sesión (StatTile).
+- **Sin scroll de página en ningún modo ni pestaña** (revisado a 1200×780, 960×640 y tamaños
+  intermedios: 1024×768, 1130×700, 1200×640, 1121×660): cada vista ocupa exactamente el alto que
+  queda (`.panel` con fila `minmax(0, 1fr)`) y sus tarjetas se estiran a ese alto. Solo desplazan
+  dentro de su tarjeta los bloques largos (turnos/subtítulos, glosario, vocabulario); el cuerpo de
+  cada tarjeta es la última red si el contenido no cupiera (p. ej. con el aviso de cuentas visible).
+- **Modo Simple | Avanzado** (`js/mode.js`): se guarda en el ajuste `uiMode` (`simple` por defecto;
+  copia en `localStorage` para no parpadear al arrancar). `body[data-mode]` gobierna la visibilidad
+  (`.adv-only` / `.simple-only`). Si faltan API keys, un aviso bajo la barra abre la hoja **Cuentas**
+  (`dialog#sheet-accounts`, en los dos modos; se cierra sola al guardar la segunda key).
+- **Controles compartidos** (`js/nav.js`): vista previa (`#preview`), cámara (`#field-camera`),
+  micrófono (`#field-mic`), idiomas (`#langs`), voz (`#field-voice`), botón de inicio
+  (`#cta-session`) y turnos (`#card-feed`) son un único nodo (mismo id y listeners) que se mueve al
+  hueco `[data-slot]` de la vista visible (Simple, Reunión, En vivo o Cámara). `state.activeTab` es la
+  vista visible: `simple` o el id de la pestaña de Avanzado.
+- **Simple** = una sola pantalla, sin pestañas ni chip de sesión, con lo esencial en tres pasos
+  numerados; todo lo demás usa los valores guardados o recomendados:
+  1. *Así te ve y te oye Meet*: vista previa (el 16:9 más grande que cabe, `container-type: size`)
+     con dos botones de icono superpuestos, **Espejo** y **Voltear** (`[data-fx-toggle]`); cámara y
+     micrófono (dos desplegables, sin «Probar»); **Tu voz** (desplegable con muestra; si no hay voz
+     elegida ni voces propias, `#field-voice[data-empty]`, solo el botón «Clonar mi voz», que abre el
+     asistente en su hoja); y una línea de ayuda fija `#meet-line`: «En Meet elige: cámara «VOXORA
+     Meet Camera» y micrófono «`virtualMic.captureName`»» en verde, o en ámbar con acción si falta el
+     micrófono virtual (Descargar VB-Cable), la salida no es virtual o falta la cámara virtual.
+  2. *Idiomas*: «Hablas en ⇄ Meet te oye en», botón grande Iniciar/Detener doblaje y línea de estado
+     con punto y cronómetro en vivo («En vivo · 1:23 · Español → Inglés»; si un cambio pide reiniciar,
+     lo dice ahí).
+  3. *Subtítulos en vivo*: la misma tarjeta de turnos de En vivo (eventos `transcript` /
+     `translation` / `dub` de `live.js`), sin metadatos: cada frase con «Dijiste · ES» y debajo
+     «Meet oye · EN»; la más reciente destacada y las anteriores atenuadas, auto-scroll dentro del
+     panel (con «Ver lo último» si subiste). Vacío: «Inicia el doblaje y empieza a hablar: verás aquí
+     lo que dices y cómo lo oye Meet».
+- **Avanzado** = siete pestañas (ARIA tabs con flechas y Ctrl+1…7; bajo 1120 px sin iconos) y el chip
+  de sesión a la derecha. Destinos antiguos: `advanced`→Modelos, `accounts`/`limits`→Ajustes. Si una
+  acción (toast, línea de ayuda) lleva a un control que no existe en Simple, `reveal()` pasa a
+  Avanzado.
+  - **Reunión** (tres columnas): *Cámara y micrófono* (vista previa con Espejo/Voltear y ocultar,
+    webcam, enlace a Cámara, micrófono + prueba de nivel); *Idiomas y voz* (idiomas, voz con escucha
+    de `previewUrl`, «Clonar mi voz», retraso 2–6 s en caliente con `delay.set` y «Si el doblaje no
+    llega a tiempo»: Silencio · recomendado / Mi voz en <idioma> / Mi voz, bajita); *Salida a Meet*
+    (salida del doblaje `virtualMicDevice`, recomendado «VOXORA Meet Speaker» → «CABLE Input», qué
+    elegir en Meet, checklist compacta y botón Iniciar/Detener).
+  - **En vivo**: tarjeta *Tu voz* (medidor, par de idiomas, voz, métricas: retraso, deriva, tardíos,
+    VOX/min, turnos, en proceso, y estado de la cámara para Meet) y los turnos original → traducción
+    con latencia, costo y «tardío».
+  - **Cámara**: *Así te ve Meet* (vista previa grande; con la cámara virtual activa abre «VOXORA Meet
+    Camera», o sea lo que ve Meet, efectos incluidos; si no, la webcam emparejada por nombre con los
+    efectos aproximados por CSS) + **Grabar prueba** (10/20/30 s, cuenta atrás 3-2-1, progreso y
+    nivel; al terminar la hoja «Así te ve y te oye Meet» reproduce el MP4 desde
+    `https://recordings.voxora-meet/…` con Abrir carpeta, Borrar y Grabar otra), e *Imagen*: espejo,
+    voltear, 16:9 / 9:16, rotación 0/90/180/270, zoom 1–2× con mover ↔/↕, brillo, contraste,
+    saturación, temperatura, «Restablecer» y ms/frame de `camera.stats`.
+  - **Modelos**, **Traducción** y **Voz**: ver abajo.
+  - **Ajustes**: *Cuentas* (API keys), *Dispositivos y límites* (`cameraAlwaysOn`, escucha local
+    `monitorDevice`, avisar / dejar de doblar en N VOX) y *Aplicación* (versión, motor, datos,
+    actualizaciones, reiniciar motor, ocultar, salir).
+- **Modelos** (protocolo v3, `js/models.js`): resumen de costo estimado en vivo (`cost.estimate` con
   los ajustes actuales como `overrides`, debounce 350 ms): VOX/min, VOX/h y USD/h + desglose de
   costo de proveedores (USD/h sin margen) por etapa; «Actualizar lista» (`models.list
   {refresh:true}`), aviso «Sin conexión · catálogo local» si `offline` (con los `errors` del motor en
-  el tooltip) y hora de la lista. Tres tarjetas:
-  - *Transcripción (Groq)*: modelo de `models.list().stt` (ficha con descripción, precio,
-    recomendado), temperatura 0–1, vocabulario personalizado en chips (`vocabulary.get/set`, hasta
-    200, pegar separado por comas).
-  - *Traducción (Groq)*: modelo de `.translate`, temperatura, esfuerzo de razonamiento (solo si
-    `supportsReasoningEffort`, opciones de `reasoningEfforts`: `low|medium|high` o `none|default`),
-    memoria 0–64 turnos, tono, instrucción de estilo, glosario editable (término → traducción fija o
-    «no traducir» = `translation: null`; clic en una fila para editarla; `glossary.get/set`).
-  - *Voz (ElevenLabs)*: modelo de `.tts` (idiomas, multiplicador de costo, descripción);
-    estabilidad (slider, o Creativo/Natural/Robusto si el modelo trae `stabilityPresets`),
-    similitud, estilo (si `supportsStyle`), velocidad 0,7–1,2 (si `supportsSpeed`), realce del
-    hablante (si `supportsSpeakerBoost`), normalización auto/siempre/nunca («siempre» se desactiva
-    si `supportsNormalizationOn: false`); «Probar voz» (`tts.preview`, el data URL se reproduce como
-    blob; avisa que consume caracteres y muestra cuántos usó) y «Restablecer valores recomendados».
+  el tooltip) y hora de la lista. Debajo, el modelo de cada etapa con su ficha (descripción, precio,
+  recomendado): *Transcripción* (`models.list().stt`), *Traducción* (`.translate`) y *Voz* (`.tts`:
+  idiomas, multiplicador de costo).
+- **Traducción**: *Transcripción* (temperatura 0–1, vocabulario personalizado en chips con
+  `vocabulary.get/set`, hasta 200, pegar separado por comas), *Traducción* (temperatura, esfuerzo de
+  razonamiento solo si `supportsReasoningEffort` con las opciones de `reasoningEfforts`, memoria 0–64
+  turnos, tono, instrucción de estilo) y *Glosario* (término → traducción fija o «no traducir» =
+  `translation: null`; clic en una fila para editarla; `glossary.get/set`).
+- **Voz** (ElevenLabs): *Carácter* (estabilidad —slider, o Creativo/Natural/Robusto si el modelo trae
+  `stabilityPresets`—, similitud, estilo si `supportsStyle`), *Ritmo y lectura* (velocidad 0,7–1,2 si
+  `supportsSpeed`, realce del hablante si `supportsSpeakerBoost`, normalización auto/siempre/nunca;
+  «siempre» se desactiva si `supportsNormalizationOn: false`) y *Probar la voz* («Probar voz» con
+  `tts.preview`, el data URL se reproduce como blob; avisa que consume caracteres y muestra cuántos
+  usó; «Valores recomendados»; Voice ID manual).
   Un modelo guardado con `available: false` se marca «no disponible» y ofrece usar el recomendado.
   Los cambios se guardan con `settings.set` y el motor los aplica desde la siguiente frase aunque haya
-  sesión: una pastilla sutil en la tarjeta dice «Guardado» o, en vivo, «Desde la próxima frase»
-  (tono y estilo siguen siendo de reinicio: «Al reiniciar»). Si el motor no conoce los comandos v3
-  (`unknown_command`) la pestaña lo explica y muestra los valores guardados.
-- **Cuentas** (hoja y tarjeta de Avanzado): API keys de Groq y ElevenLabs (password con «mostrar»,
-  estado guardada/falta, nunca se re-muestran; borrado en dos pasos). El Voice ID manual está en la
-  tarjeta de Voz de Avanzado.
+  sesión: una pastilla sutil en la tarjeta del ajuste dice «Guardado» o, en vivo, «Desde la próxima
+  frase» (tono y estilo siguen siendo de reinicio: «Al reiniciar»). Si el motor no conoce los comandos
+  v3 (`unknown_command`) el resumen lo explica y se muestran los valores guardados.
+- **Cuentas** (hoja y tarjeta de Ajustes): API keys de Groq y ElevenLabs (password con «mostrar»,
+  estado conectada/falta, nunca se re-muestran; borrado en dos pasos).
 - Los ajustes se guardan al cambiar (`settings.set` con debounce de 450 ms) y se fuerzan antes de
   `session.start` y de `tts.preview`. Errores en toasts con el `message` del motor (sin volcados
   técnicos); `model_unavailable` lleva a Modelos.
-- Accesible por teclado (pestañas ARIA con flechas y Ctrl+1…3 sobre las pestañas visibles, foco
-  visible), funciona desde 960×640 (revisado a 960×640 y 1200×780 en los dos modos: segmentados con
+- Accesible por teclado (pestañas ARIA, foco visible), funciona desde 960×640 (segmentados con
   columnas `auto` y `min-width: min-content`, sin partir palabras; bajo 300 px de ancho la imagen de
   la cámara pone cada barra debajo de su etiqueta). Abrir `ui/index.html` servido por HTTP en un
   navegador normal usa `js/mock.js` (backend simulado con los comandos v3, `native.camera.effects` y
-  `native.recording.*`; `?mock=ready|fresh|down|offline|gone|v2&mode=simple|advanced&tab=meeting|live|advanced&cam=live|lost|error|off|down|flap&sheet=accounts|recording|clone&autostart=1`;
-  los destinos antiguos `voice`/`models`/`settings` se traducen) para diseñar sin el shell.
+  `native.recording.*`; `?mock=ready|fresh|down|offline|gone|v2&mode=simple|advanced&tab=meeting|live|camera|models|translation|voice|settings&cam=live|lost|error|off|down|flap&sheet=accounts|recording|clone&autostart=1`)
+  para diseñar sin el shell.
 
 ## Ventana
 
