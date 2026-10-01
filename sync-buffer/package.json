@@ -4,6 +4,7 @@
   "private": true,
   "type": "module",
   "description": "Cola de delay que sincroniza frames de cámara con el audio doblado (M5).",
+  "license": "SEE LICENSE IN LICENSE",
   "main": "src/sync-buffer.mjs",
   "exports": {
     ".": "./src/sync-buffer.mjs",

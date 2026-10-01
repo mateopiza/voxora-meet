@@ -112,7 +112,14 @@ modelo de costos (créditos por minuto de reunión, no por stream).
   motor Node headless (`app/engine/`) lanzado por el shell y controlado por JSON-lines sobre stdio;
   el shell es dueño del video (captura MF + delay) y el motor del audio (VAD → STT → traducción →
   TTS → buffer de sincronía → mic virtual). Ambos aplican el mismo `delayMs`.
+- Licencia: **VOXORA Community & Fair Source License v1.0** (100% gratuita y libre para uso
+  personal, individual, académico y proyectos de código abierto; startups, empresas y entidades
+  con fines de lucro requieren Licencia Comercial expresa).
+- Empaquetado del runtime Node: **Cerrado** (Node.js LTS portable oficial verificado con SHA256,
+  alojado en `node/node.exe`, integrado con compresión LZMS propietaria `vxpack` dentro de `VoxoraMeetSetup.exe`).
+- Canal de publicación y auto-actualización: **Cerrado** (Canal S3 en MEGA S4, comprobación
+  anónima de `latest.json`, y verificación estricta de firma Authenticode con el thumbprint del titular en `updater.cpp`).
 
 ## Decisiones abiertas
-- Empaquetado del runtime Node del motor (node portable dentro del instalador vs. requisito externo).
-- Certificación HLK completa del driver (hoy: solo firma por atestación).
+- Certificación HLK completa del driver (hoy: solo firma por atestación mediante cuenta Partner Center y token EV).
+- Activación de Public Read policy en el bucket de MEGA S4 para descargas directas anónimas.

@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "description": "Driver de audio virtual WaveRT (voxorameet.sys) + cliente Node VirtualMic y helper WASAPI user-mode para VOXORA Meet.",
-  "license": "UNLICENSED",
+  "license": "SEE LICENSE IN LICENSE",
   "engines": { "node": ">=22" },
   "exports": {
     ".": "./src/virtual-mic.mjs",

@@ -5,7 +5,7 @@
   "type": "module",
   "description": "VOXORA Meet — doblaje profesional con voz clonada para videollamadas (Google Meet). Calidad y fidelidad de voz por encima de latencia.",
   "author": "VOXORA",
-  "license": "UNLICENSED",
+  "license": "SEE LICENSE IN LICENSE",
   "engines": {
     "node": ">=22"
   },
@@ -38,6 +38,6 @@
   },
   "config": {
     "nodeRuntime": "24.21.0",
-    "updateFeed": ""
+    "updateFeed": "https://s3.g.megas4.com/voixa/voxora-meet-updates/latest.json"
   }
 }

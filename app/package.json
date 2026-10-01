@@ -4,6 +4,7 @@
   "private": true,
   "type": "module",
   "description": "VOXORA Meet — motor headless (Node, JSON-lines por stdio) + shell nativo Win32 (app/native-shell).",
+  "license": "SEE LICENSE IN LICENSE",
   "main": "engine/engine.mjs",
   "engines": { "node": ">=22" },
   "scripts": {

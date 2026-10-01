@@ -4,6 +4,7 @@
   "private": true,
   "type": "module",
   "description": "Cámara virtual Windows (Media Foundation Virtual Camera API) para VOXORA Meet: DLL media source + host + frame writer + control desde Node.",
+  "license": "SEE LICENSE IN LICENSE",
   "main": "./src/virtual-camera.mjs",
   "exports": {
     ".": "./src/virtual-camera.mjs"

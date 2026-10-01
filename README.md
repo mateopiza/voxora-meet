@@ -876,6 +876,16 @@ Detalle completo: [`docs/E2E-MEET-CHECKLIST.md`](docs/E2E-MEET-CHECKLIST.md).
 | [`docs/RELEASE.md`](docs/RELEASE.md) | Pipeline de release, instalador, publicación, auto-actualización |
 | [`docs/SIGNING.md`](docs/SIGNING.md) | Firma Authenticode y firma del driver por atestación |
 | [`docs/E2E-MEET-CHECKLIST.md`](docs/E2E-MEET-CHECKLIST.md) | Checklist y criterios de aceptación para prueba E2E en Meet real |
+| [`docs/TROUBLESHOOTING.md`](docs/TROUBLESHOOTING.md) | Resolución de problemas comunes: VB-Cable, cámara virtual en espera, cuotas y permisos |
+
+### Documentación de módulos
+- [`capture/README.md`](capture/README.md): Adquisición WASAPI, VAD adaptativo y segmentación por frases.
+- [`pipeline/README.md`](pipeline/README.md): STT Groq Whisper, traducción contextual Groq Chat y TTS ElevenLabs con voz clonada.
+- [`sync-buffer/README.md`](sync-buffer/README.md): Sincronización continua de audio y video, delay en caliente y control de drift.
+- [`billing/README.md`](billing/README.md): Modelo de créditos VOX, tarifas por proveedor y medición de sesión en tiempo real.
+- [`app/README.md`](app/README.md): Shell Win32 C++17, motor headless Node.js y diseño de interfaz "Vocal Glass".
+- [`windows-camera/README.md`](windows-camera/README.md): Cámara virtual Media Foundation, memoria compartida y pantalla standby.
+- [`windows-driver/README.md`](windows-driver/README.md): Driver de audio virtual WaveRT (kernel mode) y build con NuGet WDK.
 
 ---
 
@@ -905,3 +915,14 @@ Detalle completo: [`docs/E2E-MEET-CHECKLIST.md`](docs/E2E-MEET-CHECKLIST.md).
 | **M6** | Cámara virtual Windows | ✅ DONE — DLL + host + writer + E2E |
 | **M7** | Perfil de costos | ✅ DONE — 13 tests |
 | **M8** | Integración E2E en Meet real | ⬜ TODO — requiere driver firmado |
+
+---
+
+## Licencia
+
+Este proyecto se distribuye bajo la **[VOXORA Community & Fair Source License (v1.0)](LICENSE)**:
+
+- **100% Gratuito y Libre**: Para uso personal, privado, individual, proyectos de código abierto, investigación y fines académicos.
+- **Restricción Comercial para Startups y Empresas**: El uso, despliegue o integración por parte de **startups**, empresas emergentes o cualquier entidad con fines de lucro requiere la obtención de una **Licencia Comercial** autorizada por VOXORA.
+
+Consulta el archivo [`LICENSE`](LICENSE) para consultar los términos legales completos o solicitar licencias comerciales.

@@ -4,6 +4,7 @@
   "private": true,
   "type": "module",
   "description": "Perfil de costos 'reunión' de VOXORA Meet: precios por modelo (Groq Whisper, Groq chat, ElevenLabs), créditos VOX, medidor de sesión y estimación por hora de reunión.",
+  "license": "SEE LICENSE IN LICENSE",
   "main": "src/index.mjs",
   "exports": {
     ".": "./src/index.mjs"

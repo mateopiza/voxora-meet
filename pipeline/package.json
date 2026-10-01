@@ -4,6 +4,7 @@
   "private": true,
   "type": "module",
   "description": "Pipeline de doblaje de VOXORA Meet: STT Groq Whisper → traducción con contexto (Groq) → TTS ElevenLabs con voz clonada.",
+  "license": "SEE LICENSE IN LICENSE",
   "main": "src/index.mjs",
   "exports": {
     ".": "./src/index.mjs",
