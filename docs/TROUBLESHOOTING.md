@@ -106,3 +106,4 @@ Si deseas reiniciar la aplicación al estado original de fábrica:
    - `%APPDATA%\VOXORA Meet\settings.json` (ajustes generales).
    - `%APPDATA%\VOXORA Meet\provider-keys.dpapi` (claves API cifradas).
 3. Vuelve a iniciar VOXORA Meet.
+
