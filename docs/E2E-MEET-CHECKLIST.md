@@ -1,5 +1,11 @@
 # M8 — Prueba E2E en una reunión Google Meet real
 
+La revisión del 2026-09-30 pasó pruebas locales y recorrido sintético por VB-Cable.
+Eso no completa este checklist. Véase [evidencia y límites](AUDIO-QUALITY-PLAN-2026-09-29.md).
+Añadir a la grabación: monitor apagado/encendido, auriculares/altavoces, los tres modos de fallback,
+traducción tardía y desconexión de dispositivo. Verificar cero repeticiones por turno y registrar
+`rejectedDubs`, colas, underruns y `presentationErrorMs`/`presentationMisses`.
+
 Prerrequisitos (una sola vez, con elevación):
 1. Driver de audio instalado y firmado (`windows-driver/installer/install.ps1`): en Configuración →
    Sonido deben aparecer "VOXORA Meet Speaker" (salida) y "VOXORA Meet Microphone" (entrada).

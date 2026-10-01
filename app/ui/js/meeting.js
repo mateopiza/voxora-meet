@@ -23,8 +23,8 @@ function setHint(el, text, tone) {
 
 const FALLBACK_HINTS = {
   silence: () => 'Si una frase no se dobla a tiempo, Meet oye silencio en ese tramo.',
-  original: (lang) => `Si una frase no se dobla a tiempo, Meet oye tu voz original en ${lang} a volumen normal.`,
-  duck: () => 'Si una frase no se dobla a tiempo, Meet oye tu voz original muy bajita.',
+  original: (lang) => `Mientras se traduce hay silencio. Si falla, se permite el original restante en ${lang}; una frase ya emitida no vuelve a salir traducida.`,
+  duck: () => 'Mientras se traduce hay silencio. Si falla, se permite el original restante muy bajito, sin repetir después la traducción.',
 };
 
 const isVirtualOutput = (name) => /voxora meet|cable input|vb-audio|virtual|voicemeeter/i.test(name || '');
@@ -296,7 +296,7 @@ function renderDevices() {
   const micId = s.micDeviceId || '';
   const def = mics.find((m) => m.default);
   const micOptions = [{ value: '', label: def ? `Predeterminado de Windows (${def.name})` : 'Predeterminado de Windows' },
-    ...mics.map((m) => ({ value: m.id, label: m.name }))];
+    ...mics.map((m) => ({ value: m.id, label: m.name, disabled: /voxora meet microphone|cable output/i.test(m.name) }))];
   const micMissing = received && micId && !mics.some((m) => m.id === micId);
   if (micMissing) micOptions.push({ value: micId, label: `${nameCache.get(micId) || 'Micrófono elegido'} (desconectado)` });
   fillSelect(els.mic, micOptions, micId);
@@ -335,7 +335,7 @@ function renderDevices() {
 
   // Escucha local (monitor)
   const monitor = s.monitorDevice || '';
-  const monOptions = [{ value: '', label: 'No escuchar' }, ...outputs.filter((n) => !isVirtualOutput(n)).map((n) => ({ value: n, label: n }))];
+  const monOptions = [{ value: '', label: 'No escuchar' }, ...outputs.filter((n) => !isVirtualOutput(n) && n !== outValue).map((n) => ({ value: n, label: n }))];
   if (monitor && !outputs.includes(monitor)) monOptions.push({ value: monitor, label: `${monitor} (desconectado)` });
   fillSelect(els.monitor, monOptions, monitor);
 }

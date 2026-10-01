@@ -70,6 +70,8 @@ export class DubbingPipeline extends EventEmitter {
   #now;
   #controller = new AbortController();
   #queues = { stt: new StageQueue(), translate: new StageQueue(), tts: new StageQueue() };
+  #inflight = 0;
+  #pendingAudioMs = 0;
   #stats = { processed: 0, dubbed: 0, discarded: 0, failed: 0, cancelled: 0, sumMs: { stt: 0, translate: 0, tts: 0, total: 0 }, last: null };
 
   /**
@@ -230,11 +232,16 @@ export class DubbingPipeline extends EventEmitter {
    * Resuelve `DubResult` o `null` si se descarta. Rechaza con AbortError si se
    * cancela, o con DubbingError/SttError/TranslationError/TtsError si falla.
    */
-  processTurn(turn, { signal } = {}) {
+  processTurn(turn, { signal, shouldSynthesize = () => true } = {}) {
     if (!turn?.pcm) return Promise.reject(new DubbingError("Turno sin `pcm`", { stage: "stt" }));
     const combined = signal ? AbortSignal.any([signal, this.#controller.signal]) : this.#controller.signal;
     const timings = { enqueuedAt: this.#now(), stt: 0, translate: 0, tts: 0, sttWaitMs: 0 };
     const audioMs = turn.endedAt != null && turn.startedAt != null ? Math.max(0, turn.endedAt - turn.startedAt) : Math.round((turn.pcm.byteLength / 2 / (turn.sampleRate || 16_000)) * 1000);
+    if (this.#inflight >= 4 || this.#pendingAudioMs + audioMs > 15000) {
+      return Promise.reject(Object.assign(new DubbingError('Hay demasiadas frases pendientes.', { stage: 'stt' }), { code: 'pipeline_overload' }));
+    }
+    this.#inflight++;
+    this.#pendingAudioMs += audioMs;
     this.#stats.processed += 1;
 
     // Etapa 1: STT
@@ -280,6 +287,7 @@ export class DubbingPipeline extends EventEmitter {
       const prev = await translatePromise;
       if (prev.discarded) return prev;
       throwIfAborted(combined, "tts");
+      if (!shouldSynthesize()) return { ...prev, discarded: true, reason: 'delivery-expired' };
       const voiceId = await this.resolveVoiceId();
       const started = this.#now();
       const synth = await this.#tts.synthesize({
@@ -300,7 +308,7 @@ export class DubbingPipeline extends EventEmitter {
     return ttsPromise.then(
       (outcome) => this.#finish(turn, outcome, { timings, audioMs }),
       (error) => this.#fail(turn, error),
-    );
+    ).finally(() => { this.#inflight--; this.#pendingAudioMs -= audioMs; });
   }
 
   #finish(turn, outcome, { timings, audioMs }) {

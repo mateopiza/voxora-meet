@@ -25,7 +25,7 @@ function countValue(buffer, value) {
 
 function makeBuffer(overrides = {}) {
   const releases = [];
-  const buffer = new SyncBuffer({ delayMs: 2000, fallbackMode: 'silence', ...overrides, onRelease: (p) => releases.push(p) });
+  const buffer = new SyncBuffer({ delayMs: 2000, fallbackMode: 'silence', maxTickMs: Infinity, fadeMs: 0, ...overrides, onRelease: (p) => releases.push(p) });
   return { buffer, releases };
 }
 
@@ -246,4 +246,81 @@ test('resampler: longitud proporcional y señal constante preservada', () => {
   assert.ok(out.every((v) => v === 1234));
   const down = resampleInt16(out, 48000, 24000);
   assert.equal(down.length, 240);
+});
+
+test('original/duck already delivered cannot be followed by a late translation, even after changing fallback', () => {
+  for (const mode of ['original', 'duck']) {
+    const { buffer } = makeBuffer({ fallbackMode: mode });
+    buffer.pushAudio({ pcm: tone(1000, 10000), sampleRate: SR, timestamp: 0 });
+    buffer.tick(2000);
+    assert.ok(buffer.tick(3000).audio.sources.original > 0);
+    buffer.fallbackMode = 'silence';
+    const r = buffer.pushDub({ audioDub: tone(1000, 20000), sampleRate: SR, sourceTimestamp: 0, sourceEndedAt: 1000 });
+    assert.equal(r.reason, 'original-already-delivered');
+    assert.equal(countValue(buffer.tick(4000).audio.pcm, 20000), 0);
+  }
+});
+
+test('reservation from speech onset suppresses original until late dub is ready; result delivered once', () => {
+  const { buffer } = makeBuffer({ fallbackMode: 'original' });
+  buffer.reserveTurn({ turnId: 'a', sourceTimestamp: 0 });
+  buffer.pushAudio({ pcm: tone(1000, 10000), sampleRate: SR, timestamp: 0 });
+  buffer.tick(2000);
+  assert.equal(countValue(buffer.tick(3000).audio.pcm, 10000), 0);
+  buffer.reserveTurn({ turnId: 'a', sourceTimestamp: 0, sourceEndedAt: 1000 });
+  const dub = { turnId: 'a', audioDub: tone(1000, 20000), sampleRate: SR, sourceTimestamp: 0, sourceEndedAt: 1000 };
+  assert.equal(buffer.pushDub(dub).scheduled, true);
+  assert.equal(countValue(buffer.tick(4000).audio.pcm, 20000), 48000);
+  assert.equal(buffer.pushDub(dub).reason, 'already-decided');
+  assert.equal(countValue(buffer.tick(5000).audio.pcm, 20000), 0);
+});
+
+test('reservations expire and reject results; oversized dub is rejected before queuing', () => {
+  const { buffer } = makeBuffer({ maxPendingMs: 1000, maxDubQueueMs: 100 });
+  const expired = [];
+  buffer.on('turn-expired', (data) => expired.push(data));
+  buffer.reserveTurn({ turnId: 'a', sourceTimestamp: 0 });
+  buffer.tick(2000);
+  assert.equal(expired.length, 1);
+  assert.equal(buffer.canDub('a'), false);
+  assert.equal(buffer.pushDub({ turnId: 'a', audioDub: tone(10, 2), sampleRate: SR, sourceTimestamp: 0 }).reason, 'already-decided');
+  assert.equal(buffer.pushDub({ audioDub: tone(101, 2), sampleRate: SR, sourceTimestamp: 0 }).reason, 'dub-queue-full');
+});
+
+test('silence fallback does not retain or upsample original; provenance counts include actual silence', () => {
+  const { buffer } = makeBuffer();
+  assert.equal(buffer.pushAudio({ pcm: tone(1000, 1000, 16000), sampleRate: 16000, timestamp: 0 }), false);
+  assert.equal(buffer.stats().queuedAudioMs, 0);
+  buffer.tick(2000);
+  assert.deepEqual(buffer.tick(2020).audio.sources, { silence: 960, original: 0, dub: 0 });
+});
+
+test('scheduler refuses a large stall before allocating or replaying old PCM', () => {
+  const buffer = new SyncBuffer();
+  buffer.tick(0);
+  assert.throws(() => buffer.tick(30000), { code: 'audio_output_overload' });
+});
+
+test('utterance fades are continuous across ticks and presentation maps to source progress', () => {
+  const { buffer } = makeBuffer({ fadeMs: 3 });
+  buffer.tick(2000);
+  buffer.pushDub({ turnId: 'fade', audioDub: tone(40, 10000), sampleRate: SR, sourceTimestamp: 0, sourceEndedAt: 20 });
+  const chunks = [2010, 2020, 2030, 2040].map((t) => buffer.tick(t));
+  const samples = int16(Buffer.concat(chunks.map((p) => p.audio.pcm)));
+  assert.equal(samples[0], 0);
+  assert.equal(samples.at(-1), 0);
+  assert.equal(samples[144], 10000);
+  assert.equal(samples[480], 10000); // no restart at tick boundary
+  assert.equal(chunks[1].presentation.sourceTimestamp, 5);
+  assert.equal(chunks[1].presentation.sourceRate, 0.5);
+  assert.ok(chunks[3].presentation); // final block retains its presentation after purge
+});
+
+test('band-limited resampling suppresses aliasing and preserves voice-band amplitude', () => {
+  const sine = (rate, hz) => Int16Array.from({ length: rate }, (_, i) => Math.round(10000 * Math.sin(2 * Math.PI * hz * i / rate)));
+  const rms = (s) => Math.sqrt(s.subarray(100, s.length - 100).reduce((n, v) => n + v * v, 0) / (s.length - 200));
+  const aliased = resampleInt16(sine(48000, 20000), 48000, 24000);
+  assert.ok(rms(aliased) < 70, `alias RMS ${rms(aliased)}`);
+  const voice = resampleInt16(sine(24000, 8000), 24000, 48000);
+  assert.ok(rms(voice) > 6900 && rms(voice) < 7200, `voice RMS ${rms(voice)}`);
 });

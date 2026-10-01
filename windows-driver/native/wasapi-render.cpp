@@ -315,7 +315,7 @@ HRESULT FindDevice(IMMDeviceEnumerator* enumerator, const Options& opt,
 class StdinQueue
 {
 public:
-    explicit StdinQueue(size_t maxBytes) : m_maxBytes(maxBytes) {}
+    explicit StdinQueue(size_t maxBytes, size_t blockAlign) : m_maxBytes(maxBytes), m_blockAlign(blockAlign) {}
 
     void Start()
     {
@@ -338,10 +338,11 @@ public:
         }
         else
         {
-            // Parada por Ctrl+C con stdin aún abierto: el hilo está bloqueado
-            // en fread y no hay forma portable de despertarlo; se desacopla y
-            // muere con el proceso (salimos justo después).
-            m_thread.detach();
+            // Cancel a blocking pipe read before destroying the queue/mutex.
+            CancelSynchronousIo(m_thread.native_handle());
+            while (WaitForSingleObject(m_thread.native_handle(), 50) == WAIT_TIMEOUT)
+                CancelSynchronousIo(m_thread.native_handle());
+            m_thread.join();
         }
     }
 
@@ -349,6 +350,7 @@ public:
     size_t Pull(uint8_t* dst, size_t bytes)
     {
         std::lock_guard<std::mutex> lock(m_mutex);
+        bytes = std::min(bytes, m_bytes - m_bytes % m_blockAlign);
         size_t copied = 0;
         while (copied < bytes && !m_chunks.empty())
         {
@@ -371,7 +373,7 @@ public:
     bool Drained()
     {
         std::lock_guard<std::mutex> lock(m_mutex);
-        return m_eof && m_bytes == 0;
+        return m_eof && m_bytes < m_blockAlign;
     }
 
     bool Eof()
@@ -380,19 +382,26 @@ public:
         return m_eof;
     }
 
+    size_t QueuedBytes() {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        return m_bytes;
+    }
+
 private:
     void ReaderLoop()
     {
-        std::vector<uint8_t> buf(16 * 1024);
+        std::vector<uint8_t> buf(4096);
         for (;;)
         {
-            const size_t got = std::fread(buf.data(), 1, buf.size(), stdin);
-            if (got == 0)
+            // _read returns available pipe bytes; fread can wait to fill 16 KiB.
+            const int count = _read(_fileno(stdin), buf.data(), static_cast<unsigned>(buf.size()));
+            if (count <= 0)
             {
                 std::lock_guard<std::mutex> lock(m_mutex);
                 m_eof = true;
                 return;
             }
+            const size_t got = static_cast<size_t>(count);
             std::unique_lock<std::mutex> lock(m_mutex);
             m_notFull.wait(lock, [&] { return m_abort || m_bytes + got <= m_maxBytes; });
             if (m_abort) return;
@@ -408,6 +417,7 @@ private:
     size_t m_frontOffset = 0;
     size_t m_bytes = 0;
     const size_t m_maxBytes;
+    const size_t m_blockAlign;
     bool m_eof = false;
     bool m_abort = false;
 };
@@ -502,7 +512,7 @@ int RunRender(IMMDeviceEnumerator* enumerator, const Options& opt)
     // Cola: 2 s de PCM como máximo; por encima stdin se bloquea (contrapresión
     // hacia Node).
     const size_t blockAlign = fmt.Format.nBlockAlign;
-    StdinQueue queue(static_cast<size_t>(opt.rate) * blockAlign * 2);
+    StdinQueue queue(static_cast<size_t>(opt.rate) * blockAlign / 2, blockAlign);
     queue.Start();
 
     // Prellenar con silencio para arrancar sin glitch.
@@ -534,7 +544,8 @@ int RunRender(IMMDeviceEnumerator* enumerator, const Options& opt)
              ",\"bits\":16},\"bufferFrames\":" + std::to_string(bufferFrames) + "}");
 
     int exitCode = 0;
-    std::vector<uint8_t> scratch(static_cast<size_t>(bufferFrames) * blockAlign);
+    uint64_t underrunFrames = 0;
+    ULONGLONG lastStats = GetTickCount64();
 
     while (!g_stop)
     {
@@ -543,7 +554,9 @@ int RunRender(IMMDeviceEnumerator* enumerator, const Options& opt)
         {
             // Timeout: el motor de audio no avanza (endpoint desconectado?).
             if (queue.Drained()) break;
-            continue;
+            EmitError("render-timeout", HRESULT_FROM_WIN32(ERROR_TIMEOUT), "El endpoint no consume audio");
+            exitCode = 4;
+            break;
         }
 
         UINT32 padding = 0;
@@ -568,6 +581,7 @@ int RunRender(IMMDeviceEnumerator* enumerator, const Options& opt)
 
         const size_t wanted = static_cast<size_t>(available) * blockAlign;
         const size_t got = queue.Pull(data, wanted);
+        underrunFrames += (wanted - got) / blockAlign;
         DWORD releaseFlags = 0;
         if (got == 0)
         {
@@ -578,6 +592,13 @@ int RunRender(IMMDeviceEnumerator* enumerator, const Options& opt)
             std::memset(data + got, 0, wanted - got);
         }
         render->ReleaseBuffer(available, releaseFlags);
+        const ULONGLONG statsNow = GetTickCount64();
+        if (statsNow - lastStats >= 1000) {
+            EmitJson("{\"event\":\"stats\",\"queuedMs\":" + std::to_string(queue.QueuedBytes() * 1000 / (opt.rate * blockAlign))
+                + ",\"paddingMs\":" + std::to_string((padding + available) * 1000 / opt.rate)
+                + ",\"underrunFrames\":" + std::to_string(underrunFrames) + "}");
+            lastStats = statsNow;
+        }
 
         if (queue.Drained())
         {

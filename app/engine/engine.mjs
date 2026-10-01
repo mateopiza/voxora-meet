@@ -26,7 +26,7 @@ import { JsonLinesServer, ProtocolError } from './protocol.mjs';
 import { SessionController } from './session-controller.mjs';
 import { createSettingsStore, normalizeSettings, PROVIDER_KEY_NAMES, MODEL_SETTING_KEYS } from './settings-store.mjs';
 import { SyncBuffer } from '../../sync-buffer/src/sync-buffer.mjs';
-import { describeOutput, resolveOutputDevice } from './output-device.mjs';
+import { describeOutput, resolveOutputDevice, validateAudioRoutes } from './output-device.mjs';
 import { friendlyError } from './errors.mjs';
 import { ModelCatalog } from './models.mjs';
 
@@ -177,13 +177,20 @@ export async function createEngine({ input = process.stdin, output = process.std
       } catch {
         return null; // sin helper: MicCapture reportará el error con detalle
       }
-      const args = ['--rate', '16000'];
+      // Preserve the original voice at delivery rate; downsample only the STT branch.
+      const args = ['--rate', '48000'];
       if (deviceId) args.push('--device', deviceId);
       const child = spawn(helperPath, args, { stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
       child.stderr.on('data', (line) => server.emitEvent('log', { scope: 'wasapi', line: String(line).trim() }));
       child.on('exit', (code) => server.emitEvent('log', { scope: 'wasapi', line: `helper terminó (${code})` }));
       const stream = child.stdout;
-      stream.destroy = () => { try { child.kill(); } catch { /* ya cerrado */ } };
+      stream.sampleRate = 48000;
+      const destroy = stream.destroy.bind(stream);
+      child.on('error', (error) => stream.destroy(error));
+      stream.destroy = (error) => {
+        try { child.kill(); } catch { /* ya cerrado */ }
+        return destroy(error);
+      };
       return stream;
     },
     createPipeline: async ({ settings: rawSettings, keys }) => {
@@ -245,6 +252,11 @@ export async function createEngine({ input = process.stdin, output = process.std
       const { module, error } = await loadSibling('virtualMic');
       if (!module) throw new ProtocolError('module_missing', error ?? 'windows-driver no cargado');
       return resolveOutputDevice(() => module.listRenderEndpoints(), settings.virtualMicDevice);
+    },
+    validateAudioRoutes: async (settings, output) => {
+      const [{ module: capture }, { module: render }] = await Promise.all([loadSibling('capture'), loadSibling('virtualMic')]);
+      const [captures, renders] = await Promise.all([capture.MicCapture.listDevices(), render.listRenderEndpoints()]);
+      return validateAudioRoutes({ settings, output, captures, renders });
     },
     createMeter: (opts) => {
       const { module } = moduleCache.get('billing') ?? {};
@@ -407,6 +419,7 @@ export async function createEngine({ input = process.stdin, output = process.std
           : [],
       ]);
       const output = describeOutput(renderEndpoints, settings.virtualMicDevice);
+      await controller.revalidateRoutes(mics, renderEndpoints);
       const vcamHost = vcamHostPath();
       let virtualCameraInstalled = false;
       try { await fs.access(vcamHost); virtualCameraInstalled = true; } catch { /* no compilado */ }
@@ -546,7 +559,7 @@ export async function createEngine({ input = process.stdin, output = process.std
   }
 
   const server = new JsonLinesServer({ input, output, handlers });
-  for (const event of ['status', 'level', 'transcript', 'translation', 'dub', 'stats', 'cost', 'warn', 'limit', 'error']) {
+  for (const event of ['status', 'level', 'transcript', 'translation', 'dub', 'stats', 'cost', 'warn', 'limit', 'error', 'presentation']) {
     controller.on(event, (data) => server.emitEvent(event, data));
   }
   server.on('close', async () => {

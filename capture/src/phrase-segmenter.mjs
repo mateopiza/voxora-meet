@@ -24,6 +24,7 @@ const DEFAULTS = Object.freeze({
   endSilenceMs: 700, // silencio continuo que cierra el turno
   minTurnMs: 250, // voz mínima para no descartar el turno como ruido
   maxTurnMs: 15000, // longitud máxima del turno
+  maxTurnGraceMs: 0, // margen opcional para terminar una palabra antes del corte duro
   preRollMs: 200, // audio previo al inicio de voz que se conserva
   tailSilenceMs: 200, // silencio final que se conserva al cerrar por endpointing
   softCutWindowMs: 3000, // ventana antes de maxTurnMs donde se acepta cortar en pausa débil
@@ -81,7 +82,7 @@ function validateOptions(options) {
   for (const key of positive) {
     if (!(options[key] > 0)) throw new RangeError(`PhraseSegmenter: ${key} debe ser > 0`);
   }
-  for (const key of ["preRollMs", "tailSilenceMs", "softCutWindowMs", "softCutSilenceMs", "resyncToleranceMs"]) {
+  for (const key of ["preRollMs", "tailSilenceMs", "softCutWindowMs", "softCutSilenceMs", "resyncToleranceMs", "maxTurnGraceMs"]) {
     if (!(options[key] >= 0)) throw new RangeError(`PhraseSegmenter: ${key} debe ser >= 0`);
   }
   if (options.maxTurnMs < options.minTurnMs) {
@@ -111,7 +112,7 @@ export class PhraseSegmenter extends EventEmitter {
    * Solo se aceptan claves de tiempo; el turno en curso usa los nuevos límites desde el siguiente frame.
    */
   setLimits(patch = {}) {
-    const allowed = ["endSilenceMs", "minTurnMs", "maxTurnMs", "softCutWindowMs", "softCutSilenceMs"];
+    const allowed = ["endSilenceMs", "minTurnMs", "maxTurnMs", "softCutWindowMs", "softCutSilenceMs", "maxTurnGraceMs"];
     const next = { ...this.options };
     for (const key of allowed) if (patch[key] !== undefined) next[key] = patch[key];
     validateOptions(next);
@@ -316,6 +317,7 @@ export class PhraseSegmenter extends EventEmitter {
       sumSquares: 0,
     };
     for (const frame of frames) this.#appendFrame(frame);
+    this.emit('turn-start', { startedAt: this.turn.startedAt });
   }
 
   #appendFrame(frame) {
@@ -338,7 +340,7 @@ export class PhraseSegmenter extends EventEmitter {
       this.#closeTurn("silence");
       return;
     }
-    if (durationMs >= options.maxTurnMs) {
+    if (durationMs >= options.maxTurnMs + options.maxTurnGraceMs) {
       this.#closeTurn("max-length");
       return;
     }
@@ -368,7 +370,10 @@ export class PhraseSegmenter extends EventEmitter {
       }
     }
 
-    if (frames.length === 0 || turn.voicedMs < options.minTurnMs) return; // ruido, no frase
+    if (frames.length === 0 || turn.voicedMs < options.minTurnMs) {
+      this.emit('turn-discarded', { startedAt: turn.startedAt });
+      return;
+    }
 
     const pcm = Buffer.concat(frames.map((frame) => frame.pcm));
     const sampleCount = pcm.length / 2;

@@ -7,6 +7,23 @@ import { SyncBuffer } from '../../sync-buffer/src/sync-buffer.mjs';
 
 const tick = () => new Promise((r) => setImmediate(r));
 
+test('stop during pending startup prevents capture and closes the newly opened endpoint', async () => {
+  let release;
+  const { deps, virtualMic, mic } = makeDeps();
+  virtualMic.open = () => new Promise((resolve) => { release = resolve; });
+  const controller = new SessionController(deps);
+  collect(controller);
+  const starting = controller.start();
+  const rejected = assert.rejects(starting, { name: 'AbortError' });
+  await tick();
+  const stopped = controller.stop();
+  release();
+  await Promise.all([rejected, stopped]);
+  assert.equal(controller.state, 'idle');
+  assert.equal(mic.started, 0);
+  assert.equal(virtualMic.closed, 1);
+});
+
 function makeDeps(overrides = {}) {
   let now = 10_000;
   const clock = { now: () => now, advance: (ms) => { now += ms; } };
@@ -105,12 +122,16 @@ test('turno → pipeline → SyncBuffer → VirtualMic: el doblaje sale tras del
   assert.equal(c.stats().dubsPending, 1);
 
   // Avanzar 2.3 s de reloj: el rango [t0+100, t0+200) ya se liberó con el doblaje.
-  clock.advance(2300);
-  await new Promise((r) => setTimeout(r, 20));
+  c.session.syncBuffer.stop();
+  for (let i = 0; i < 115; i++) {
+    clock.advance(20);
+    c.session.syncBuffer.tick(clock.now());
+    await tick();
+  }
   const all = Buffer.concat(virtualMic.written);
   let dubbed = 0;
   for (let i = 0; i < all.length; i += 2) if (all.readInt16LE(i) === 0x1111) dubbed++;
-  assert.equal(dubbed, 4800);
+  assert.equal(dubbed, 4800 - 2 * 144); // 3 ms fade at each utterance edge
   assert.equal(c.stats().dubsPending, 0);
   await c.stop();
 });
@@ -124,6 +145,7 @@ test('límite de VOX: tras alcanzarlo no se envían más turnos al pipeline y se
   mic.emit('turn', { pcm: Buffer.alloc(320), sampleRate: 16000, startedAt: clock.now(), endedAt: clock.now() + 10 });
   await tick(); await tick();
   assert.ok(events.some((e) => e.event === 'limit'));
+  clock.advance(20);
   mic.emit('turn', { pcm: Buffer.alloc(320), sampleRate: 16000, startedAt: clock.now(), endedAt: clock.now() + 10 });
   await tick();
   assert.equal(pipeline.calls.length, 1);

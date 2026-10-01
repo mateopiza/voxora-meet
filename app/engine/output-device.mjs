@@ -18,8 +18,41 @@ export function findEndpoint(endpoints, wanted) {
   const needle = norm(wanted);
   if (!needle) return null;
   return endpoints.find((ep) => ep.id === wanted)
+    ?? endpoints.find((ep) => norm(ep.name) === needle)
     ?? endpoints.find((ep) => norm(ep.name).includes(needle))
     ?? null;
+}
+
+function routeError(message) { return Object.assign(new Error(message), { code: 'audio_route_invalid' }); }
+
+function uniqueEndpoint(endpoints, wanted) {
+  const byId = endpoints.find((ep) => ep.id === wanted);
+  if (byId) return byId;
+  const exact = endpoints.filter((ep) => norm(ep.name) === norm(wanted));
+  const matches = exact.length ? exact : endpoints.filter((ep) => norm(ep.name).includes(norm(wanted)));
+  if (matches.length !== 1) throw routeError(`No se puede identificar un único dispositivo «${wanted}». Actualiza los dispositivos y selecciona uno por su nombre completo.`);
+  return matches[0];
+}
+
+/** Validate and pin actual endpoints, including the Windows default input. */
+export function validateAudioRoutes({ settings, output, captures, renders }) {
+  const input = settings.micDeviceId
+    ? captures.find((ep) => ep.id === settings.micDeviceId)
+    : captures.find((ep) => ep.default || ep.isDefault);
+  if (!input) throw routeError('El micrófono de entrada no está disponible. Selecciona tu micrófono físico.');
+  if (KNOWN_VIRTUAL_CABLES.some((c) => norm(input.name).includes(norm(c.capture)))) {
+    throw routeError('La entrada es un micrófono virtual de doblaje. Selecciona tu micrófono físico para evitar que la voz vuelva a traducirse.');
+  }
+  const main = uniqueEndpoint(renders, output.deviceId || output.deviceName);
+  let monitor = null;
+  if (settings.monitorDevice) {
+    monitor = uniqueEndpoint(renders, settings.monitorDevice);
+    if (monitor.id === main.id) throw routeError('La escucha local y el doblaje usan la misma salida. Desactiva la escucha local o elige tus auriculares.');
+    if (KNOWN_VIRTUAL_CABLES.some((c) => norm(monitor.name).includes(norm(c.render)))) {
+      throw routeError('La escucha local debe salir por auriculares o altavoces, no por un cable virtual.');
+    }
+  }
+  return { input, output: main, monitor };
 }
 
 /** Micrófono que el usuario debe elegir en Meet para un endpoint de render dado. */

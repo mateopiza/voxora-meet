@@ -86,7 +86,9 @@ function onEngineEvent({ event, data = {}, engineNowMs }) {
       break;
     }
     case 'warn': {
-      if (data.kind === 'output' || data.kind === 'monitor') {
+      if (data.kind === 'audio-delivery' || data.kind === 'latency-budget') {
+        toast({ kind: 'warn', title: data.kind === 'latency-budget' ? 'Ajusta el retraso' : 'Entrega de voz', message: data.message });
+      } else if (data.kind === 'output' || data.kind === 'monitor') {
         toast({ kind: 'info', title: data.kind === 'output' ? 'Salida del doblaje' : 'Escucha local', message: data.message });
       } else if (data.kind === 'vox') {
         state.vox.warned = true;

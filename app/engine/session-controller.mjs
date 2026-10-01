@@ -19,6 +19,7 @@
 
 import { EventEmitter } from 'node:events';
 import { friendlyError } from './errors.mjs';
+import { PcmWriter } from './pcm-writer.mjs';
 
 export const STATES = Object.freeze(['idle', 'starting', 'running', 'stopping']);
 
@@ -88,6 +89,7 @@ export class SessionController extends EventEmitter {
     this.session = null;
     this.lastLevel = { rmsDb: -100, speaking: false };
     this.turnCounter = 0;
+    this.sessionCounter = 0;
   }
 
   #setState(state, extra = {}) {
@@ -104,13 +106,20 @@ export class SessionController extends EventEmitter {
   async start(overrides = {}) {
     if (this.state !== 'idle') throw Object.assign(new Error(`no se puede iniciar en estado ${this.state}`), { code: 'bad_state' });
     this.#setState('starting');
-    const session = { pendingTurns: 0, turns: 0, statsTimer: null };
+    const session = { id: ++this.sessionCounter, pendingTurns: 0, turns: 0, pendingAudioMs: 0, statsTimer: null, jobs: new Map(), latencySamples: [] };
+    let finishStart;
+    session.startFinished = new Promise((resolve) => { finishStart = resolve; });
+    const checkActive = () => {
+      if (session.closing || this.session !== session) throw new DOMException('Inicio cancelado', 'AbortError');
+    };
     this.session = session;
     try {
       const stored = await this.deps.settingsStore.load();
+      checkActive();
       const settings = { ...stored, ...overrides };
       this.settings = settings;
       const keys = await this.deps.settingsStore.getProviderKeys();
+      checkActive();
 
       // Salida: micrófono virtual (driver WaveRT) — se abre primero para
       // fallar rápido si el driver no está instalado.
@@ -123,27 +132,69 @@ export class SessionController extends EventEmitter {
         : { deviceName: settings.virtualMicDevice || undefined };
       if (output.warning) this.emit('warn', { kind: 'output', message: output.warning });
       session.output = output;
+      session.routes = await this.deps.validateAudioRoutes?.(settings, output);
+      checkActive();
+      const failOutput = (scope, error) => {
+        if (this.session !== session || session.closing) return;
+        this.#error(scope, error);
+        if (scope === 'virtual-mic') {
+          session.outputFailure = error;
+          if (this.state === 'starting') return;
+          session.syncBuffer?.stop();
+          void this.stop();
+        } else {
+          session.monitorWriter?.stop();
+          void session.monitor?.close({ discard: true }).catch(() => {});
+        }
+      };
       session.virtualMic = this.deps.createVirtualMic({
         sampleRate: 48000,
         channels: 1,
         ...(output.deviceId ? { deviceId: output.deviceId } : {}),
         ...(output.deviceName ? { deviceName: output.deviceName } : {}),
       });
+      session.writer = new PcmWriter(session.virtualMic, {
+        ...this.deps.writerOptions,
+        onError: (error) => failOutput('virtual-mic', error),
+        onWritten: (presentation) => {
+          if (!presentation || session.closing || this.session !== session) return;
+          const now = this.now();
+          if (session.presentationTurn === presentation.turnId && now - session.presentationAt < 100) return;
+          session.presentationTurn = presentation.turnId;
+          session.presentationAt = now;
+          const telemetry = session.virtualMic.telemetry;
+          const deviceMs = (telemetry?.queuedMs ?? 0) + (telemetry?.paddingMs ?? 100);
+          this.emit('presentation', {
+            sessionId: session.id, turnId: presentation.turnId,
+            sourceAgeMs: now - presentation.sourceTimestamp + deviceMs * presentation.sourceRate,
+            sourceRate: presentation.sourceRate,
+            validForMs: Math.min(300, presentation.remainingMs + deviceMs),
+          });
+        },
+      });
       await session.virtualMic.open();
+      checkActive();
 
       // Monitor opcional: el mismo audio doblado también por los altavoces
       // del usuario. Un fallo aquí nunca impide la sesión.
       if (settings.monitorDevice) {
         try {
-          session.monitor = this.deps.createVirtualMic({ sampleRate: 48000, channels: 1, deviceName: settings.monitorDevice });
+          session.monitor = this.deps.createVirtualMic({ sampleRate: 48000, channels: 1, deviceName: settings.monitorDevice,
+            ...(session.routes?.monitor ? { deviceId: session.routes.monitor.id } : {}) });
+          session.monitorWriter = new PcmWriter(session.monitor, { ...this.deps.writerOptions, onError: (error) => failOutput('monitor', error) });
           await session.monitor.open();
+          this.emit('warn', { kind: 'monitor', message: 'Escucha local activa: usa auriculares para que el micrófono no vuelva a captar el doblaje.' });
         } catch (error) {
+          session.monitorWriter?.stop();
+          try { await session.monitor?.close({ discard: true }); } catch { /* optional */ }
+          session.monitorWriter?.dispose();
           session.monitor = null;
           this.emit('warn', { kind: 'monitor', message: `No se pudo abrir "${settings.monitorDevice}" para escuchar el doblaje.` });
           this.#error('monitor', error);
         }
       }
 
+      checkActive();
       session.meter = this.deps.createMeter({
         maxVoxPerSession: settings.maxVoxPerSession > 0 ? settings.maxVoxPerSession : Infinity,
         warnAtVox: settings.warnAtVox > 0 ? settings.warnAtVox : null,
@@ -152,6 +203,7 @@ export class SessionController extends EventEmitter {
       session.meter.on?.('limit', (data) => this.emit('limit', data));
 
       session.pipeline = await this.deps.createPipeline({ settings, keys });
+      checkActive();
 
       session.syncBuffer = this.deps.createSyncBuffer({
         delayMs: settings.delayMs,
@@ -161,29 +213,32 @@ export class SessionController extends EventEmitter {
         outputSampleRate: 48000,
         now: this.now,
       });
-      session.syncBuffer.on('release', ({ audio }) => {
-        try {
-          session.virtualMic.write(audio.pcm);
-        } catch (error) {
-          this.#error('virtual-mic', error);
-        }
-        if (session.monitor) {
-          try { session.monitor.write(audio.pcm); } catch { /* el monitor es opcional */ }
-        }
+      session.syncBuffer.on('release', ({ audio, presentation }) => {
+        if (this.session !== session || session.closing) return;
+        session.writer.enqueue(audio.pcm, presentation);
+        session.monitorWriter?.enqueue(audio.pcm);
       });
+      session.syncBuffer.on('turn-expired', ({ turnId }) => session.jobs.get(turnId)?.abort());
+      session.syncBuffer.on('dub-rejected', (data) => this.emit('warn', { kind: 'audio-delivery', ...data, message: 'Una frase no se reprodujo para evitar duplicación o exceso de retraso.' }));
       session.syncBuffer.on('drift-exceeded', (data) => this.emit('warn', { kind: 'drift', ...data }));
       session.syncBuffer.on('late-dub', (data) => this.emit('warn', { kind: 'late-dub', ...data }));
-      session.syncBuffer.on('error', (error) => this.#error('sync-buffer', error));
+      session.syncBuffer.on('error', (error) => failOutput('virtual-mic', error));
 
       // Entrada: fuente PCM opcional (tee del original) + MicCapture.
-      const deviceId = settings.micDeviceId || undefined;
+      const deviceId = session.routes?.input.id || settings.micDeviceId || undefined;
       session.source = this.deps.createAudioSource ? await this.deps.createAudioSource({ deviceId }) : null;
+      checkActive();
       if (session.source) {
-        const clock = new SampleClock({ sampleRate: 16000 });
+        const sourceRate = session.source.sampleRate ?? 16000;
+        const clock = new SampleClock({ sampleRate: sourceRate });
+        let tail = Buffer.alloc(0);
         session.onSourceData = (chunk) => {
-          const timestamp = clock.stamp(chunk.length, this.now());
+          const data = tail.length ? Buffer.concat([tail, chunk]) : chunk;
+          const bytes = data.length - data.length % 2;
+          tail = bytes === data.length ? Buffer.alloc(0) : Buffer.from(data.subarray(bytes));
+          const timestamp = clock.stamp(bytes, this.now());
           try {
-            session.syncBuffer.pushAudio({ pcm: chunk, sampleRate: 16000, timestamp });
+            session.syncBuffer.pushAudio({ pcm: data.subarray(0, bytes), sampleRate: sourceRate, timestamp });
           } catch (error) {
             this.#error('original-audio', error);
           }
@@ -191,16 +246,23 @@ export class SessionController extends EventEmitter {
         session.source.on('data', session.onSourceData);
       }
       session.mic = this.deps.createMicCapture({ deviceId, source: session.source ?? undefined });
+      session.mic.on('turn-start', (turn) => {
+        if (session.closing || this.session !== session) return;
+        session.syncBuffer.reserveTurn({ turnId: `${session.id}:${turn.startedAt}`, sourceTimestamp: turn.startedAt });
+      });
+      session.mic.on('turn-discarded', (turn) => session.syncBuffer.finishTurn(`${session.id}:${turn.startedAt}`));
+      session.mic.on('sourceEnd', () => failOutput('virtual-mic', Object.assign(new Error('El micrófono dejó de enviar audio. Reconéctalo y reinicia el doblaje.'), { code: 'audio_capture_closed' })));
       session.mic.on('level', (level) => {
         this.lastLevel = { rmsDb: level.rmsDb, speaking: Boolean(level.speaking) };
         this.emit('level', this.lastLevel);
       });
       session.mic.on('turn', (turn) => this.#onTurn(turn));
-      session.mic.on('error', (error) => this.#error('mic', error));
+      session.mic.on('error', (error) => failOutput('virtual-mic', error));
       this.#applyTurnBudget(session);
       session.mic.start();
 
       session.syncBuffer.start(this.tickIntervalMs);
+      if (session.outputFailure) throw session.outputFailure;
       session.statsTimer = setInterval(() => this.emit('stats', this.stats()), this.statsIntervalMs);
       session.statsTimer.unref?.();
       this.#setState('running');
@@ -210,20 +272,36 @@ export class SessionController extends EventEmitter {
       this.session = null;
       this.#setState('idle', { reason: 'start-failed' });
       throw error;
+    } finally {
+      finishStart();
     }
   }
 
   async stop() {
     if (this.state === 'idle' || !this.session) return this.stats();
     const session = this.session;
+    if (session.stopPromise) return session.stopPromise;
+    if (this.state === 'starting') {
+      session.closing = true;
+      this.#setState('stopping');
+      session.stopPromise = session.startFinished.then(() => this.stats());
+      return session.stopPromise;
+    }
     this.#setState('stopping');
-    await this.#teardown(session);
-    this.session = null;
-    this.#setState('idle', { reason: 'stopped' });
-    return this.stats();
+    session.stopPromise = (async () => {
+      await this.#teardown(session);
+      if (this.session === session) this.session = null;
+      this.#setState('idle', { reason: 'stopped' });
+      return this.stats();
+    })();
+    return session.stopPromise;
   }
 
   async #teardown(session) {
+    session.closing = true;
+    for (const job of session.jobs.values()) job.abort();
+    session.writer?.stop();
+    session.monitorWriter?.stop();
     if (session.statsTimer) clearInterval(session.statsTimer);
     try { session.mic?.stop(); } catch (error) { this.#error('mic', error); }
     if (session.source) {
@@ -231,15 +309,21 @@ export class SessionController extends EventEmitter {
       try { session.source.destroy?.(); } catch { /* best-effort */ }
     }
     try { session.syncBuffer?.stop(); } catch { /* best-effort */ }
+    session.pipeline?.abort?.();
     try { await session.pipeline?.close?.(); } catch (error) { this.#error('pipeline', error); }
-    try { await session.virtualMic?.close(); } catch (error) { this.#error('virtual-mic', error); }
-    try { await session.monitor?.close(); } catch { /* opcional */ }
+    try { await session.virtualMic?.close({ discard: true }); } catch (error) { this.#error('virtual-mic', error); }
+    try { await session.monitor?.close({ discard: true }); } catch { /* opcional */ }
+    session.writer?.dispose();
+    session.monitorWriter?.dispose();
   }
 
   #onTurn(turn) {
     const session = this.session;
     if (!session || this.state !== 'running') return;
     const turnId = ++this.turnCounter;
+    const deliveryId = `${session.id}:${turn.startedAt}`;
+    if (!session.syncBuffer.reserveTurn({ turnId: deliveryId, sourceTimestamp: turn.startedAt, sourceEndedAt: turn.endedAt })) return;
+    if (session.jobs.has(deliveryId)) return;
     session.turns += 1;
 
     // Sin fuente PCM continua, el original solo se conoce al cerrar el turno:
@@ -253,16 +337,29 @@ export class SessionController extends EventEmitter {
     }
 
     if (session.meter.limitReached) {
+      session.syncBuffer.finishTurn(deliveryId);
       this.emit('warn', { kind: 'vox', reason: 'limit-reached', turnId, skipped: true });
       return;
     }
 
+    const durationMs = Math.max(0, turn.endedAt - turn.startedAt) || turn.pcm.length / 32;
+    if (session.pendingTurns >= 4 || session.pendingAudioMs + durationMs > 15000) {
+      session.syncBuffer.finishTurn(deliveryId);
+      this.emit('warn', { kind: 'audio-delivery', turnId, reason: 'pipeline-overload', message: 'Hay demasiadas frases pendientes. Esta frase no se traducirá; espera a que termine el doblaje.' });
+      return;
+    }
+    const job = new AbortController();
+    session.jobs.set(deliveryId, job);
+    session.pendingAudioMs += durationMs;
     session.pendingTurns += 1;
     Promise.resolve()
-      .then(() => session.pipeline.processTurn(turn))
+      .then(() => {
+        job.signal.throwIfAborted();
+        return session.pipeline.processTurn(turn, { signal: job.signal, shouldSynthesize: () => !session.closing && session.syncBuffer.canDub(deliveryId) });
+      })
       .then((result) => {
-        if (this.session !== session) return; // la sesión ya se cerró
-        if (!result) return; // turno descartado por el pipeline
+        if (this.session !== session || session.closing) return;
+        if (!result) { session.syncBuffer.finishTurn(deliveryId); return; }
         if (result.transcript) {
           this.emit('transcript', { turnId, text: result.transcript, startedAt: turn.startedAt, endedAt: turn.endedAt });
         }
@@ -271,7 +368,7 @@ export class SessionController extends EventEmitter {
         if (Number.isFinite(result.readyAt) && Number.isFinite(turn.endedAt)) {
           this.#observeLatency(session, result.readyAt - turn.endedAt);
         }
-        const placement = session.syncBuffer.pushDub(result);
+        const placement = session.syncBuffer.pushDub({ ...result, turnId: deliveryId });
         const durationMs = result.audioDub && result.sampleRate
           ? (result.audioDub.byteLength / 2 / result.sampleRate) * 1000
           : 0;
@@ -282,15 +379,24 @@ export class SessionController extends EventEmitter {
           scheduled: Boolean(placement?.scheduled),
           placedStart: placement?.placedStart ?? null,
           driftMs: placement?.driftMs ?? 0,
+          sourceTimestamp: turn.startedAt,
+          sourceEndedAt: turn.endedAt,
+          placedEnd: placement?.placedEnd ?? null,
+          reason: placement?.reason,
         });
         if (result.cost) {
           const snapshot = session.meter.add(result.cost);
           this.emit('cost', { turnId, cost: result.cost, totalVox: snapshot?.totalVox ?? session.meter.totalVox });
         }
       })
-      .catch((error) => this.#error('pipeline', error))
+      .catch((error) => {
+        session.syncBuffer.finishTurn(deliveryId);
+        if (this.session === session && !session.closing && error?.name !== 'AbortError') this.#error('pipeline', error);
+      })
       .finally(() => {
-        if (this.session === session) session.pendingTurns -= 1;
+        session.jobs.delete(deliveryId);
+        session.pendingAudioMs -= durationMs;
+        session.pendingTurns -= 1;
       });
   }
 
@@ -302,16 +408,20 @@ export class SessionController extends EventEmitter {
    */
   turnBudgetMs(session = this.session) {
     const delayMs = this.settings?.delayMs ?? 3000;
-    const latency = session?.latencyEmaMs ?? INITIAL_TURN_LATENCY_MS;
+    const latency = this.latencyPercentile(0.95, session) ?? INITIAL_TURN_LATENCY_MS;
     return Math.round(Math.min(MAX_TURN_MS, Math.max(MIN_TURN_BUDGET_MS, delayMs - latency - TURN_SAFETY_MARGIN_MS)));
   }
 
   #applyTurnBudget(session) {
+    const required = (this.latencyPercentile(0.95, session) ?? INITIAL_TURN_LATENCY_MS) + MIN_TURN_BUDGET_MS + TURN_SAFETY_MARGIN_MS;
+    const insufficient = required > (this.settings?.delayMs ?? session.syncBuffer?.delayMs ?? 3000);
+    if (insufficient && !session.budgetWarned) this.emit('warn', { kind: 'latency-budget', requiredDelayMs: Math.ceil(required), message: `El retraso actual es corto para esta voz. Prueba ${Math.min(6000, Math.ceil(required / 100) * 100) / 1000} s; si las frases siguen llegando tarde, espera a que termine cada doblaje.` });
+    session.budgetWarned = insufficient;
     if (typeof session?.mic?.setSegmenterLimits !== 'function') return;
     const maxTurnMs = this.turnBudgetMs(session);
     if (maxTurnMs === session.appliedMaxTurnMs) return;
     try {
-      session.mic.setSegmenterLimits({ maxTurnMs, softCutWindowMs: Math.min(3000, maxTurnMs) });
+      session.mic.setSegmenterLimits({ maxTurnMs, maxTurnGraceMs: 500, softCutWindowMs: Math.min(3000, maxTurnMs) });
       session.appliedMaxTurnMs = maxTurnMs;
     } catch (error) {
       this.#error('mic', error);
@@ -323,7 +433,29 @@ export class SessionController extends EventEmitter {
     session.latencyEmaMs = session.latencyEmaMs == null
       ? latencyMs
       : session.latencyEmaMs * 0.7 + latencyMs * 0.3;
+    session.latencySamples.push(latencyMs);
+    if (session.latencySamples.length > 64) session.latencySamples.shift();
     this.#applyTurnBudget(session);
+  }
+
+  latencyPercentile(p, session = this.session) {
+    if (!session?.latencySamples?.length) return null;
+    const sorted = [...session.latencySamples].sort((a, b) => a - b);
+    return Math.round(sorted[Math.max(0, Math.ceil(p * sorted.length) - 1)]);
+  }
+
+  async revalidateRoutes(captures, renders) {
+    const session = this.session;
+    if (!session?.routes || session.closing) return;
+    const ids = new Set(renders.map((d) => d.id));
+    if (!captures.some((d) => d.id === session.routes.input.id) || !ids.has(session.routes.output.id)) {
+      this.#error('audio-route', Object.assign(new Error('Se desconectó una ruta de audio de la sesión. Selecciona los dispositivos y vuelve a iniciar.'), { code: 'audio_route_invalid' }));
+      await this.stop();
+    } else if (session.routes.monitor && !ids.has(session.routes.monitor.id) && !session.monitorWriter?.closed) {
+      session.monitorWriter?.stop();
+      await session.monitor?.close({ discard: true });
+      this.emit('warn', { kind: 'monitor', message: 'Se desconectó la escucha local. El doblaje sigue saliendo hacia Meet.' });
+    }
   }
 
   /** Cambia el delay en caliente (si hay sesión) y lo devuelve clampeado. */
@@ -384,8 +516,17 @@ export class SessionController extends EventEmitter {
       limitReached: Boolean(meter?.limitReached),
       turnBudgetMs: session ? this.turnBudgetMs(session) : null,
       latencyMs: session?.latencyEmaMs != null ? Math.round(session.latencyEmaMs) : null,
+      latencyP50Ms: this.latencyPercentile(0.5),
+      latencyP95Ms: this.latencyPercentile(0.95),
+      recommendedDelayMs: Math.ceil((this.latencyPercentile(0.95) ?? INITIAL_TURN_LATENCY_MS) + MIN_TURN_BUDGET_MS + TURN_SAFETY_MARGIN_MS),
+      pipeline: session?.pipeline?.metrics ?? null,
       turns: session?.turns ?? 0,
       pendingTurns: session?.pendingTurns ?? 0,
+      pendingAudioMs: session?.pendingAudioMs ?? 0,
+      output: session?.writer?.stats() ?? null,
+      monitor: session?.monitorWriter?.stats() ?? null,
+      deviceAudio: session?.virtualMic?.telemetry ?? null,
+      routes: session?.routes ?? null,
       level: this.lastLevel,
     };
   }

@@ -19,7 +19,7 @@
 //    viejo de la cola (frames y audio) y se retoma desde el nuevo objetivo.
 
 import { EventEmitter } from 'node:events';
-import { applyGain, dbToGain, int16ToBuffer, pcmToInt16, resampleInt16 } from './resampler.mjs';
+import { dbToGain, int16ToBuffer, pcmToInt16, resampleInt16 } from './resampler.mjs';
 
 export const MIN_DELAY_MS = 2000;
 export const MAX_DELAY_MS = 6000;
@@ -29,6 +29,7 @@ export const DUCK_DB = -18;
 
 const FALLBACK_MODES = new Set(['silence', 'original', 'duck']);
 const LATE_DUB_POLICIES = new Set(['play', 'drop']);
+const HISTORY_MS = 60000;
 
 export function clampDelayMs(value) {
   const n = Number(value);
@@ -65,6 +66,10 @@ export class SyncBuffer extends EventEmitter {
     this.lateDubPolicy = options.lateDubPolicy ?? 'play';
     this.maxDriftMs = Number.isFinite(options.maxDriftMs) ? options.maxDriftMs : 1500;
     this.maxQueuedFrames = Number.isFinite(options.maxQueuedFrames) ? options.maxQueuedFrames : 600;
+    this.maxDubQueueMs = options.maxDubQueueMs ?? 15000;
+    this.maxPendingMs = options.maxPendingMs ?? 30000;
+    this.maxTickMs = options.maxTickMs ?? 500;
+    this.fadeMs = options.fadeMs ?? 3;
     this.#now = typeof options.now === 'function' ? options.now : () => performance.now();
     if (typeof options.onRelease === 'function') this.on('release', options.onRelease);
     this.#duckGain = dbToGain(DUCK_DB);
@@ -84,6 +89,9 @@ export class SyncBuffer extends EventEmitter {
   #original = [];
   /** @type {{ sourceStart, sourceEnd, placedStart, placedEnd, coverEnd, samples, dub }[]} */
   #dubs = [];
+  #turns = new Map();
+  #fallbackRanges = [];
+  #rejectedDubs = 0;
 
   #releasedUntil = null;   // cursor de línea fuente (null hasta el primer tick)
   #originWall = 0;         // reloj de pared del primer tick
@@ -128,6 +136,9 @@ export class SyncBuffer extends EventEmitter {
     this.#frames = [];
     this.#original = [];
     this.#dubs = [];
+    this.#turns.clear();
+    this.#fallbackRanges = [];
+    this.#rejectedDubs = 0;
     this.#releasedUntil = null;
     this.#originWall = 0;
     this.#emittedSamples = 0;
@@ -137,6 +148,33 @@ export class SyncBuffer extends EventEmitter {
   }
 
   // ── entradas ────────────────────────────────────────────────────────────
+
+  /** Reserve on speech onset, before original fallback can escape. */
+  reserveTurn({ turnId, sourceTimestamp, sourceEndedAt }) {
+    if (turnId == null || !Number.isFinite(sourceTimestamp)) throw new TypeError('reserveTurn: turno y timestamp requeridos');
+    const key = String(turnId);
+    const previous = this.#turns.get(key);
+    if (previous && previous.state !== 'pending') return false;
+    if (this.#turns.size >= 1024 && !previous) return false;
+    this.#turns.set(key, {
+      start: sourceTimestamp,
+      end: Number.isFinite(sourceEndedAt) ? sourceEndedAt : sourceTimestamp + this.maxPendingMs,
+      expires: previous?.expires ?? sourceTimestamp + this.maxPendingMs,
+      state: 'pending',
+    });
+    return true;
+  }
+
+  finishTurn(turnId, reason = 'fallback') {
+    const turn = this.#turns.get(String(turnId));
+    if (turn?.state === 'pending') { turn.state = reason; return true; }
+    return false;
+  }
+
+  canDub(turnId) {
+    const turn = this.#turns.get(String(turnId));
+    return !turn || (turn.state === 'pending' && !this.#fallbackRanges.some((r) => r.end > turn.start && r.start < turn.end));
+  }
 
   /** Frame de cámara con timestamp (opcional: el shell nativo puede llevar su propio ring). */
   pushFrame({ frame, timestamp }) {
@@ -159,6 +197,8 @@ export class SyncBuffer extends EventEmitter {
   pushAudio({ pcm, sampleRate, timestamp }) {
     if (!Number.isFinite(timestamp)) throw new TypeError('pushAudio: timestamp numérico requerido');
     if (!Number.isFinite(sampleRate) || sampleRate <= 0) throw new TypeError('pushAudio: sampleRate inválido');
+    // Nothing will consume the original in translation-only mode.
+    if (this.fallbackMode === 'silence') return false;
     const samples = resampleInt16(pcmToInt16(pcm), sampleRate, this.#sampleRate);
     if (samples.length === 0) return false;
     const end = timestamp + (samples.length * 1000) / this.#sampleRate;
@@ -182,6 +222,21 @@ export class SyncBuffer extends EventEmitter {
     if (!Number.isFinite(sourceTimestamp)) throw new TypeError('pushDub: sourceTimestamp requerido');
     if (!Number.isFinite(sampleRate) || sampleRate <= 0) throw new TypeError('pushDub: sampleRate inválido');
     const sourceEnd = Number.isFinite(sourceEndedAt) ? Math.max(sourceEndedAt, sourceTimestamp) : sourceTimestamp;
+    const key = String(dub.turnId ?? `source:${sourceTimestamp}:${sourceEnd}`);
+    const turn = this.#turns.get(key);
+    const reject = (reason) => {
+      this.#rejectedDubs++;
+      if (turn?.state === 'pending') turn.state = reason;
+      this.emit('dub-rejected', { turnId: dub.turnId, sourceTimestamp, reason });
+      return { scheduled: false, reason, late: this.#releasedUntil !== null && sourceTimestamp < this.#releasedUntil };
+    };
+    if (turn && turn.state !== 'pending') return reject('already-decided');
+    if (this.#releasedUntil !== null && sourceTimestamp < this.#releasedUntil - HISTORY_MS) return reject('expired');
+    if (this.#fallbackRanges.some((r) => r.end > sourceTimestamp && r.start < Math.max(sourceEnd, sourceTimestamp + 1000 / sampleRate))) return reject('original-already-delivered');
+    if (this.#turns.size >= 1024 && !turn) return reject('turn-capacity');
+    const durationEstimate = (audioDub?.byteLength ?? 0) / 2 / sampleRate * 1000;
+    const queuedEnd = this.#dubs.at(-1)?.placedEnd ?? sourceTimestamp;
+    if (durationEstimate > this.maxDubQueueMs || Math.max(queuedEnd, sourceTimestamp, this.#releasedUntil ?? sourceTimestamp) + durationEstimate - (this.#releasedUntil ?? sourceTimestamp) > this.maxDubQueueMs) return reject('dub-queue-full');
     const samples = resampleInt16(pcmToInt16(audioDub ?? Buffer.alloc(0)), sampleRate, this.#sampleRate);
     const durationMs = (samples.length * 1000) / this.#sampleRate;
 
@@ -190,13 +245,14 @@ export class SyncBuffer extends EventEmitter {
       this.#lateDubs += 1;
       const lateByMs = this.#releasedUntil - sourceTimestamp;
       this.emit('late-dub', { sourceTimestamp, lateByMs, policy: this.lateDubPolicy, lateDubs: this.#lateDubs });
-      if (this.lateDubPolicy === 'drop') return { scheduled: false, late: true, lateByMs };
+      if (this.lateDubPolicy === 'drop') return reject('late');
     }
 
     const lastEnd = this.#dubs.length ? this.#dubs[this.#dubs.length - 1].placedEnd : -Infinity;
     let placedStart = Math.max(sourceTimestamp, lastEnd);
     if (this.#releasedUntil !== null) placedStart = Math.max(placedStart, this.#releasedUntil);
     const placedEnd = placedStart + durationMs;
+    this.#turns.set(key, { start: sourceTimestamp, end: sourceEnd, expires: placedEnd, state: 'scheduled' });
     const entry = {
       sourceStart: sourceTimestamp,
       sourceEnd,
@@ -250,6 +306,12 @@ export class SyncBuffer extends EventEmitter {
     if (!Number.isFinite(nowMs)) nowMs = this.#now();
     const sr = this.#sampleRate;
     const target = nowMs - this.#delayMs;
+    for (const [turnId, turn] of this.#turns) {
+      if (turn.state === 'pending' && nowMs >= turn.expires) {
+        turn.state = 'expired';
+        this.emit('turn-expired', { turnId });
+      }
+    }
 
     if (this.#releasedUntil === null) {
       this.#releasedUntil = target;
@@ -264,6 +326,7 @@ export class SyncBuffer extends EventEmitter {
     const samplesToEmit = totalSamples - this.#emittedSamples;
     if (samplesToEmit <= 0) return null;
     const wallMs = (samplesToEmit * 1000) / sr;
+    if (wallMs > this.maxTickMs) throw Object.assign(new Error('El audio se interrumpió demasiado tiempo. Reinicia el doblaje para evitar reproducir voz atrasada.'), { code: 'audio_output_overload' });
     const tolMs = 1000 / sr; // una muestra
 
     const available = target - this.#releasedUntil;
@@ -313,6 +376,7 @@ export class SyncBuffer extends EventEmitter {
     }
 
     // Avanzar cursores y purgar lo ya consumido.
+    const presentation = this.presentationAt(rangeStart);
     this.#emittedSamples = totalSamples;
     if (!frozen) this.#releasedUntil = rangeEnd;
     this.#purge();
@@ -332,6 +396,7 @@ export class SyncBuffer extends EventEmitter {
       frozen,
       droppedMs,
       now: nowMs,
+      presentation,
     };
     this.emit('release', payload);
     return payload;
@@ -355,10 +420,25 @@ export class SyncBuffer extends EventEmitter {
       dubsPending,
       driftMs: Math.round(this.#driftMs),
       lateDubs: this.#lateDubs,
+      rejectedDubs: this.#rejectedDubs,
+      pendingReservations: [...this.#turns.values()].filter((t) => t.state === 'pending').length,
+      dubQueueMs: Math.max(0, (this.#dubs.at(-1)?.placedEnd ?? cursor ?? 0) - (cursor ?? this.#dubs[0]?.placedStart ?? 0)),
     };
   }
 
   // ── internos ────────────────────────────────────────────────────────────
+
+  presentationAt(timestamp) {
+    const dub = this.#dubs.find((d) => timestamp >= d.placedStart && timestamp < d.placedEnd);
+    if (!dub) return null;
+    const sourceRate = (dub.sourceEnd - dub.sourceStart) / (dub.placedEnd - dub.placedStart);
+    return {
+      turnId: dub.dub.turnId,
+      sourceTimestamp: dub.sourceStart + (timestamp - dub.placedStart) * sourceRate,
+      sourceRate,
+      remainingMs: dub.placedEnd - timestamp,
+    };
+  }
 
   /**
    * Llena `out` (muestras consecutivas desde `rangeStart`) con la mezcla:
@@ -368,6 +448,7 @@ export class SyncBuffer extends EventEmitter {
     const sr = this.#sampleRate;
     const n = out.length;
     const rangeEnd = rangeStart + (n * 1000) / sr;
+    const kinds = new Uint8Array(n); // 0 silence, 1 original, 2 dub; zero samples still have provenance.
 
     // 1) Fallback.
     if (this.fallbackMode !== 'silence') {
@@ -378,10 +459,18 @@ export class SyncBuffer extends EventEmitter {
         const from = Math.max(0, -offset);
         const to = Math.min(n, seg.samples.length - offset);
         if (to <= from) continue;
-        const src = gain === 1 ? seg.samples : applyGain(seg.samples, gain);
-        out.set(src.subarray(from + offset, to + offset), from);
-        sources.original += to - from;
+        if (gain === 1) out.set(seg.samples.subarray(from + offset, to + offset), from);
+        else for (let i = from; i < to; i++) out[i] = Math.round(seg.samples[i + offset] * gain);
+        kinds.fill(1, from, to);
       }
+    }
+
+    for (const turn of this.#turns.values()) {
+      if (turn.state !== 'pending' || turn.end <= rangeStart || turn.start >= rangeEnd) continue;
+      const from = Math.max(0, Math.round((turn.start - rangeStart) * sr / 1000));
+      const to = Math.min(n, Math.round((turn.end - rangeStart) * sr / 1000));
+      out.fill(0, from, to);
+      kinds.fill(0, from, to);
     }
 
     // 2) Silenciar los rangos cubiertos por un turno doblado.
@@ -391,13 +480,8 @@ export class SyncBuffer extends EventEmitter {
       const from = Math.max(0, Math.round(((coverStart - rangeStart) * sr) / 1000));
       const to = Math.min(n, Math.round(((d.coverEnd - rangeStart) * sr) / 1000));
       if (to > from) {
-        // Corrige la contabilidad del original que acabamos de tapar.
-        if (this.fallbackMode !== 'silence') {
-          let overwritten = 0;
-          for (let i = from; i < to; i++) if (out[i] !== 0) overwritten++;
-          sources.original = Math.max(0, sources.original - overwritten);
-        }
         out.fill(0, from, to);
+        kinds.fill(0, from, to);
       }
     }
 
@@ -409,12 +493,38 @@ export class SyncBuffer extends EventEmitter {
       const to = Math.min(n, d.samples.length - offset);
       if (to <= from) continue;
       out.set(d.samples.subarray(from + offset, to + offset), from);
-      sources.dub += to - from;
+      const fadeSamples = Math.round(this.fadeMs * sr / 1000);
+      // Fade only utterance boundaries; never restart the envelope on each tick.
+      for (let i = from; i < to && fadeSamples > 0; i++) {
+        const at = i + offset;
+        const gain = Math.min(1, at / fadeSamples, (d.samples.length - 1 - at) / fadeSamples);
+        if (gain < 1) out[i] = Math.round(out[i] * Math.max(0, gain));
+      }
+      kinds.fill(2, from, to);
+    }
+    for (let i = 0; i < n;) {
+      const kind = kinds[i];
+      let end = i + 1;
+      while (end < n && kinds[end] === kind) end++;
+      sources[kind === 1 ? 'original' : kind === 2 ? 'dub' : 'silence'] += end - i;
+      if (kind === 1) {
+        const startMs = rangeStart + i * 1000 / sr;
+        const endMs = rangeStart + end * 1000 / sr;
+        const last = this.#fallbackRanges.at(-1);
+        if (last && startMs <= last.end + 1000 / sr) last.end = endMs;
+        else this.#fallbackRanges.push({ start: startMs, end: endMs });
+      }
+      i = end;
     }
   }
 
   #purge() {
     const cursor = this.#releasedUntil;
+    const cutoff = cursor - HISTORY_MS;
+    while (this.#fallbackRanges.length && this.#fallbackRanges[0].end <= cutoff) this.#fallbackRanges.shift();
+    for (const [key, turn] of this.#turns) {
+      if (turn.state !== 'pending' && Math.max(turn.end, turn.expires) < cutoff) this.#turns.delete(key);
+    }
     while (this.#original.length && this.#original[0].end <= cursor) this.#original.shift();
     while (this.#dubs.length && this.#dubs[0].coverEnd <= cursor) this.#dubs.shift();
     // Deriva: si ya no hay doblajes retrasando la línea, vuelve a 0.

@@ -23,6 +23,7 @@
 #include <vector>
 
 #include "video_effects.h"
+#include "audio_presentation.h"
 
 namespace voxora {
 
@@ -36,6 +37,8 @@ std::vector<CameraDevice> enumerateCameras();
 class CameraCapture {
  public:
   struct Stats {
+    double presentationErrorMs = 0;
+    uint64_t presentationMisses = 0;
     bool running = false;
     int width = 0;
     int height = 0;
@@ -68,6 +71,7 @@ class CameraCapture {
   void stop();
   bool running() const { return running_.load(); }
   void setDelayMs(int delayMs);
+  void setAudioPresentation(double ageMs, double sourceRate, double validForMs);
   int delayMs() const { return delayMs_.load(); }
   Stats stats();
 
@@ -117,6 +121,9 @@ class CameraCapture {
   std::thread captureThread_;
   std::thread publishThread_;
   std::mutex ringMutex_;
+  AudioPresentation presentation_;
+  std::atomic<double> presentationErrorMs_{0};
+  std::atomic<uint64_t> presentationMisses_{0};
   std::deque<Frame> ring_;
   size_t ringCapacity_ = 1;
   uint64_t frameCounter_ = 0;

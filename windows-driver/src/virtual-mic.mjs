@@ -123,6 +123,8 @@ export class VirtualMic extends EventEmitter {
     /** Información del endpoint abierto (del evento "ready"). */
     this.device = null;
     this.bytesWritten = 0;
+    this.telemetry = { queuedMs: 0, paddingMs: bufferMs, underrunFrames: 0 };
+    this._helperBuffer = '';
 
     this._child = null;
     this._open = false;
@@ -179,6 +181,7 @@ export class VirtualMic extends EventEmitter {
     else args.push('--name', this.deviceName);
 
     const child = this.spawn(this.helperPath, args, { stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true });
+    this._helperBuffer = '';
     this._child = child;
     this._closing = false;
 
@@ -208,7 +211,9 @@ export class VirtualMic extends EventEmitter {
 
     const ready = await this._waitForReady(child);
     this.device = ready.device ?? null;
+    this.telemetry.paddingMs = ready.bufferFrames ? ready.bufferFrames * 1000 / this.sampleRate : this.bufferMs;
     this._open = true;
+    child.on('error', (error) => { if (!this._closing) this.emit('error', error); });
 
     // Muerte inesperada del helper mientras está abierto.
     this._exitPromise.then(({ code, signal }) => {
@@ -253,6 +258,7 @@ export class VirtualMic extends EventEmitter {
           if (msg.event === 'ready') {
             // Seguir consumiendo stdout para no bloquear el helper.
             child.stdout.on('data', (d) => this._onHelperLine(d));
+            if (buf) this._onHelperLine(buf);
             finish(resolve, msg);
             return;
           }
@@ -277,13 +283,19 @@ export class VirtualMic extends EventEmitter {
 
   /** Líneas del helper después de "ready" (eof/stopped/error). */
   _onHelperLine(chunk) {
-    for (const raw of String(chunk).split(/\r?\n/)) {
+    this._helperBuffer += String(chunk);
+    const lines = this._helperBuffer.split(/\r?\n/);
+    this._helperBuffer = lines.pop();
+    for (const raw of lines) {
       const line = raw.trim();
       if (!line.startsWith('{')) continue;
       let msg;
       try { msg = JSON.parse(line); } catch { continue; }
       if (msg.event === 'error' && !this._closing) {
         this.emit('error', new Error(`wasapi-render: ${msg.code} ${msg.hresult ?? ''} ${msg.detail ?? ''}`.trim()));
+      } else if (msg.event === 'stats') {
+        this.telemetry = { queuedMs: Number(msg.queuedMs) || 0, paddingMs: Number(msg.paddingMs) || 0, underrunFrames: Number(msg.underrunFrames) || 0 };
+        this.emit('stats', this.telemetry);
       }
     }
   }
@@ -306,11 +318,35 @@ export class VirtualMic extends EventEmitter {
       return Promise.reject(new RangeError(`el PCM debe ser múltiplo de ${this.blockAlign} bytes (frame s16le x ${this.channels} ch)`));
     }
     const stdin = this._child.stdin;
-    this.bytesWritten += pcm.length;
     return new Promise((resolve, reject) => {
-      const ok = stdin.write(pcm, (err) => (err ? reject(err) : undefined));
-      if (ok) resolve();
-      else stdin.once('drain', resolve);
+      let settled = false;
+      let wrote = false;
+      let callbackDone = false;
+      let drained = false;
+      const finish = (error) => {
+        if (settled) return;
+        if (!error && (!wrote || !callbackDone || !drained)) return;
+        settled = true;
+        stdin.off('drain', onDrain);
+        stdin.off('error', onError);
+        stdin.off('close', onClose);
+        this.off('close', onClose);
+        if (error) reject(error);
+        else { this.bytesWritten += pcm.length; resolve(); }
+      };
+      const onDrain = () => { drained = true; finish(); };
+      const onError = (error) => finish(error);
+      const onClose = () => finish(new Error('La salida de audio se cerró durante la escritura'));
+      stdin.on('drain', onDrain);
+      stdin.on('error', onError);
+      stdin.on('close', onClose);
+      this.on('close', onClose);
+      try {
+        const ok = stdin.write(pcm, (error) => { callbackDone = true; finish(error); });
+        drained = drained || ok;
+        wrote = true;
+        finish();
+      } catch (error) { finish(error); }
     });
   }
 
@@ -319,7 +355,7 @@ export class VirtualMic extends EventEmitter {
    * @param {object} [opts]
    * @param {number} [opts.timeoutMs] tras el cual se mata el proceso (defecto 3000)
    */
-  async close({ timeoutMs = 3000 } = {}) {
+  async close({ timeoutMs = 3000, discard = false } = {}) {
     const child = this._child;
     if (!child) {
       this._open = false;
@@ -327,16 +363,21 @@ export class VirtualMic extends EventEmitter {
     }
     this._closing = true;
     this._open = false;
-    try { child.stdin.end(); } catch { /* ya cerrado */ }
+    try {
+      if (discard) { child.stdin.destroy(); child.kill(); }
+      else child.stdin.end();
+    } catch { /* ya cerrado */ }
 
     const exit = this._exitPromise ?? Promise.resolve({ code: null, signal: null });
+    let timeout;
     const timer = new Promise((resolve) => {
-      setTimeout(() => {
+      timeout = setTimeout(() => {
         try { child.kill(); } catch { /* ya muerto */ }
         resolve({ code: null, signal: 'SIGKILL' });
       }, timeoutMs).unref?.();
     });
     await Promise.race([exit, timer]);
+    clearTimeout(timeout);
     this._child = null;
     this.device = null;
   }

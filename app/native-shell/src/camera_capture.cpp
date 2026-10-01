@@ -120,7 +120,17 @@ bool CameraCapture::start(const std::wstring& symbolicLink, int delayMs, std::ws
   return launchCapture(symbolicLink, error);
 }
 
-void CameraCapture::setDelayMs(int delayMs) { delayMs_.store(std::clamp(delayMs, 0, kMaxDelayMs)); }
+void CameraCapture::setDelayMs(int delayMs) {
+  delayMs_.store(std::clamp(delayMs, 0, kMaxDelayMs));
+  std::lock_guard<std::mutex> lock(ringMutex_);
+  presentation_.reset();
+}
+
+void CameraCapture::setAudioPresentation(double ageMs, double sourceRate, double validForMs) {
+  std::lock_guard<std::mutex> lock(ringMutex_);
+  if (!presentation_.update(static_cast<double>(vcam::qpcNow100ns()) / 10000.0, ageMs, sourceRate, validForMs))
+    presentationMisses_.fetch_add(1);
+}
 
 bool CameraCapture::launchCapture(const std::wstring& symbolicLink, std::wstring& error) {
   captureStop_.store(true);
@@ -199,6 +209,8 @@ void CameraCapture::stop() {
 
 CameraCapture::Stats CameraCapture::stats() {
   Stats s;
+  s.presentationErrorMs = presentationErrorMs_.load();
+  s.presentationMisses = presentationMisses_.load();
   s.running = running_.load();
   s.width = width_.load();
   s.height = height_.load();
@@ -259,7 +271,11 @@ void CameraCapture::enqueue(Frame&& frame) {
   ringCapacity_ = std::max<size_t>(2, kRingBudgetBytes / frameBytes);
   // Frames necesarios para cubrir el delay actual (+ margen de medio segundo).
   const double fps = std::max(1.0, captureFps_.load() > 0 ? captureFps_.load() : static_cast<double>(kTargetFps));
-  const size_t needed = static_cast<size_t>(std::ceil((delayMs_.load() + 500) / 1000.0 * fps));
+  const double nowMs = static_cast<double>(vcam::qpcNow100ns()) / 10000.0;
+  const double nominalHistory = delayMs_.load() > 0 ? delayMs_.load() + 1500.0 : 500.0;
+  const double historyMs = std::min(AudioPresentation::kMaxHistoryMs,
+      std::max(nominalHistory, presentation_.active(nowMs) ? nowMs - presentation_.target(nowMs, delayMs_.load()) + 500 : 0));
+  const size_t needed = static_cast<size_t>(std::ceil(historyMs / 1000.0 * fps));
   // Si no cabe, se diezma la cadencia de entrada (p. ej. 30 → 15 fps) en vez de perder el delay.
   const size_t stride = std::max<size_t>(1, (needed + ringCapacity_ - 1) / ringCapacity_);
   frameCounter_++;
@@ -280,22 +296,43 @@ void CameraCapture::publishLoop() {
   constexpr int64_t kHeartbeatEvery100ns = 5'000'000;  // 500 ms
   int64_t lastHeartbeat = 0;
   bool heartbeatCleared = false;
+  int64_t lastSourceTimestamp = -1;
   while (running_.load()) {
     const int64_t now = vcam::qpcNow100ns();
-    const int64_t cutoff = now - static_cast<int64_t>(delayMs_.load()) * 10'000;
     Frame toPublish;
     bool found = false;
     bool ringEmpty = false;
     {
       std::lock_guard<std::mutex> lock(ringMutex_);
-      // Libera el frame más nuevo con timestamp <= now - delayMs y descarta los más viejos
-      // (bajar el delay salta frames; subirlo deja el último publicado congelado).
-      while (!ring_.empty() && ring_.front().timestamp100ns <= cutoff) {
-        if (found) recycle(std::move(toPublish.rgba));  // frame saltado (bajó el delay): al pool
-        toPublish = std::move(ring_.front());
+      const double nowMs = static_cast<double>(now) / 10000.0;
+      const bool tracking = delayMs_.load() > 0 && presentation_.active(nowMs);
+      const int64_t cutoff = static_cast<int64_t>((tracking ? presentation_.target(nowMs, delayMs_.load()) : nowMs - delayMs_.load()) * 10000.0);
+      const double historyMs = std::min(AudioPresentation::kMaxHistoryMs,
+          std::max(delayMs_.load() > 0 ? delayMs_.load() + 1500.0 : 500.0, tracking ? nowMs - static_cast<double>(cutoff) / 10000.0 + 500 : 0));
+      const int64_t oldest = now - static_cast<int64_t>(historyMs * 10000.0);
+      while (!ring_.empty() && ring_.front().timestamp100ns < oldest) {
+        recycle(std::move(ring_.front().rgba));
         ring_.pop_front();
+      }
+      const Frame* selected = nullptr;
+      for (const auto& frame : ring_) {
+        if (frame.timestamp100ns > cutoff) break;
+        selected = &frame;
+      }
+      if (selected && selected->timestamp100ns != lastSourceTimestamp) {
+        toPublish.timestamp100ns = selected->timestamp100ns;
+        toPublish.width = selected->width;
+        toPublish.height = selected->height;
+        toPublish.rgba = takeBuffer(selected->rgba.size());
+        std::copy(selected->rgba.begin(), selected->rgba.end(), toPublish.rgba.begin());
+        lastSourceTimestamp = selected->timestamp100ns;
         found = true;
       }
+      if (tracking) {
+        const double error = selected ? static_cast<double>(cutoff - selected->timestamp100ns) / 10000.0 : historyMs;
+        presentationErrorMs_.store(error);
+        if (error > 300) presentationMisses_.fetch_add(1);
+      } else presentationErrorMs_.store(0);
       ringEmpty = ring_.empty();
     }
 
@@ -313,14 +350,15 @@ void CameraCapture::publishLoop() {
     sharedMemoryOk_.store(producer.connected());
 
     if (found) {
-      if (producer.publish(toPublish.rgba.data(), toPublish.width, toPublish.height, toPublish.timestamp100ns, now))
+      // Presentation timestamps stay monotonic even when selecting older source frames.
+      if (producer.publish(toPublish.rgba.data(), toPublish.width, toPublish.height, now, now))
         published_.fetch_add(1);
       heartbeatCleared = false;
       lastHeartbeat = now;
       // Lo publicado va también a la grabación de prueba (si hay); el buffer vuelve al pool.
       {
         std::lock_guard<std::mutex> lock(tapMutex_);
-        if (tap_) tap_(toPublish.rgba, toPublish.width, toPublish.height, toPublish.timestamp100ns);
+        if (tap_) tap_(toPublish.rgba, toPublish.width, toPublish.height, now);
       }
       recycle(std::move(toPublish.rgba));
     } else if (sourceLost_.load() && ringEmpty) {

@@ -1,34 +1,23 @@
-# Sincronía de video en el shell nativo
+﻿# Sincronía de video en el shell nativo
 
 El `SyncBuffer` (JS, `sync-buffer/`) gestiona **solo la línea de tiempo de audio**: retiene el
 original `delayMs`, mezcla doblaje/fallback y emite PCM 48 kHz continuo hacia `VirtualMic`.
 `pushFrame()` existe y funciona (tests), pero el shell nativo **no lo usa**: pasar 1280×720 RGBA a
 30 fps por el pipe JSON-lines sería inviable.
 
-## Regla
+## Regla de presentación
 
-El shell (`app/native-shell`, `VoxoraMeet.exe`) aplica **el mismo `delayMs`** al video con un ring
-de frames propio durante la sesión de doblaje. Fuera de ella (con `cameraAlwaysOn`, por defecto) la
-cámara virtual sigue activa y el mismo ring publica **con retraso 0** (en vivo); al iniciar la sesión
-el retraso pasa a `delayMs` y al detenerla vuelve a 0, sin cortar la cámara:
+Durante el doblaje, el motor informa el progreso del audio aceptado por la salida mediante eventos `presentation`. El shell usa ese progreso de fuente para seleccionar el frame correspondiente. El mensaje incluye una estimación de la cola y del padding nativos; no constituye una confirmación de reproducción física.
 
-1. `CameraCapture` lee la webcam con `IMFSourceReader` (RGB32, 1280×720@30) y sella cada frame
-   con `QueryPerformanceCounter` en el momento de captura.
-2. Los frames entran en un ring (capacidad = `ceil(6 s × fps) + margen`, la cota superior del delay).
-3. Un hilo de publicación, cada ~1/fps, publica en la memoria compartida el frame más nuevo cuyo
-   `timestamp <= now - delayMs` (el mismo criterio que `SyncBuffer.tick`).
-4. Cambios de delay en caliente siguen la misma política que el audio:
-   - **sube** → no hay frame elegible durante la diferencia: se mantiene el último publicado
-     (congelado), igual que el audio emite silencio;
-   - **baja** → los frames más viejos se saltan y se publica el más nuevo elegible.
-5. Ambas líneas de tiempo comparten el valor de `delayMs` porque el shell es quien lo fija: al mover
-   el trackbar envía `delay.set` al motor **y** actualiza su ring en la misma llamada. El motor
-   reporta el `delayMs` efectivo (clamp 2000–6000) en la respuesta y el shell lo adopta.
+1. `CameraCapture` sella los frames de la webcam con `QueryPerformanceCounter` y conserva un historial acotado.
+2. El reloj `AudioPresentation` transforma la edad y velocidad de la fuente en un instante objetivo de video, teniendo en cuenta el tránsito del mensaje en el shell. Rechaza valores inválidos y caduca las actualizaciones.
+3. El publicador selecciona el frame disponible más cercano al objetivo. Conserva frames recientes para permitir que una traducción de duración diferente avance por el intervalo de fuente correspondiente.
+4. Sin una actualización válida, el retraso nominal `delayMs` sirve como referencia. Fuera de la sesión, `cameraAlwaysOn` publica en vivo.
+5. Los timestamps publicados siguen siendo monotónicos aunque el contenido seleccionado provenga de un frame anterior. Las métricas de desajuste y de frames ausentes permiten detectar límites del historial.
 
-Reloj: el motor usa `performance.now()` (ms monotónicos, QPC por debajo); el shell usa QPC en
-100 ns. No hace falta convertir entre ambos porque nunca se cruzan timestamps: cada lado retiene con
-el mismo `delayMs` desde su propio instante de captura, y el audio y el video se capturan del mismo
-instante real (mic y webcam del mismo hablante).
+El historial llega hasta 7,5 s y tiene un presupuesto de 640 MiB. Cuando es necesario, reduce la cadencia retenida para conservar el intervalo sin superar el presupuesto. Se reutilizan buffers de píxeles para reducir asignaciones.
+
+La estimación periódica de la cola introduce incertidumbre. Las pruebas del reloj y la compilación nativa pasaron; queda pendiente medir la sincronía labial en una reunión real. Este mecanismo no garantiza un desfase <=300 ms ni correspondencia fonética entre idiomas. Véase [el informe de audio](AUDIO-QUALITY-PLAN-2026-09-29.md).
 
 ## Memoria compartida hacia la cámara virtual
 

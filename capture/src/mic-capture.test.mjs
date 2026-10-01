@@ -5,6 +5,27 @@ import { PassThrough } from "node:stream";
 import { MicCapture, DEFAULT_HELPER_PATH } from "./mic-capture.mjs";
 import { tone, silence } from "./test-signals.mjs";
 
+test('48 kHz original branch is converted to 16 kHz STT, invariant under odd pipe chunks', async () => {
+  const audio = Buffer.concat([silence(1000, 48000), tone(1500, 0.3, 440, 48000), silence(1500, 48000)]);
+  async function run(size) {
+    const source = Object.assign(new PassThrough(), { sampleRate: 48000 });
+    const capture = new MicCapture({ source, clock: () => 10000 });
+    const turns = [], starts = [];
+    capture.on('turn', (t) => turns.push(t));
+    capture.on('turn-start', (t) => starts.push(t));
+    capture.start();
+    for (let i = 0; i < audio.length; i += size) source.write(audio.subarray(i, i + size));
+    const end = once(capture, 'sourceEnd');
+    source.end(); await end;
+    capture.stop();
+    assert.equal(starts.length, 1);
+    assert.equal(turns.length, 1);
+    assert.equal(turns[0].sampleRate, 16000);
+    return turns[0].pcm;
+  }
+  assert.deepEqual(await run(997), await run(9600));
+});
+
 /** Proceso hijo falso: stdout/stderr son PassThrough y `kill()` emite `exit`. */
 function fakeChild() {
   const child = new EventEmitter();

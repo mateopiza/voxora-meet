@@ -10,8 +10,10 @@ Tiempos en ms monotónicos (`performance.now()`), audio PCM s16le mono salvo ind
   Un turno = frase completa cerrada por silencio (endpointing), NO ventana fija.
 - `level` → `{ rmsDb, speaking: boolean }` (para la UI, ~20 Hz).
 - `error`.
-Fuente PCM inyectable: `new MicCapture({ source })` donde `source` es cualquier `Readable` de PCM s16le 16 kHz
-(el helper WASAPI nativo, o un stream de test).
+Fuente PCM inyectable: `new MicCapture({ source })` con `Readable` PCM s16le mono.
+Sin `source.sampleRate` se asumen 16 kHz; la fuente real declara 48000.
+MicCapture convierte con estado a 16 kHz para STT; el original conserva 48 kHz.
+También emite `turn-start` y `turn-discarded` con `{ startedAt }` para reservar/liberar el turno.
 
 ## pipeline → sync-buffer
 `DubbingPipeline.processTurn(turn)` → `Promise<DubResult>`:
@@ -21,11 +23,18 @@ Fuente PCM inyectable: `new MicCapture({ source })` donde `source` es cualquier 
   transcript, translation, cost: { stt, translate, tts, totalVox } }
 ```
 Turnos descartados (sin voz/alucinación) resuelven `null`.
+`processTurn(turn, { signal, shouldSynthesize })` permite cancelar o impedir TTS cuando ya no se
+puede entregar el turno. Admite hasta cuatro turnos y 15 s de audio fuente pendientes.
 
 ## sync-buffer → entrega
 `SyncBuffer` recibe `pushFrame({ frame, timestamp })` y `pushAudio({ pcm, sampleRate, timestamp })` del original,
 y `pushDub(dubResult)`. Retiene `delayMs` (2000–6000, configurable en caliente) y libera con `onRelease({ frame, audio })`
 en el mismo tick: `audio` es el doblaje si llegó a tiempo para ese rango, o el original/silencio según `fallbackMode`.
+`reserveTurn({ turnId, sourceTimestamp, sourceEndedAt? })` reserva desde el inicio de voz.
+Mientras está pendiente se emite silencio. `finishTurn(turnId)` finaliza sin doblaje.
+`pushDub({ ...dubResult, turnId })` devuelve `scheduled:false` con `reason` si se repite, vence,
+excede la cola o ya salió original. La decisión es definitiva para ese turno.
+`release` incluye `presentation` cuando hay doblaje: progreso de fuente, tasa y duración restante.
 
 ## entrega → Windows
 - Video: lo maneja el shell nativo: webcam (MF SourceReader) → ring de `delayMs` → shared memory `Local\VoxoraMeetVCamFrames` → DLL MF Virtual Camera. `VirtualCamera.writeFrame` (Node) queda para pruebas/herramientas.
@@ -42,7 +51,10 @@ en el mismo tick: `audio` es el doblaje si llegó a tiempo para ese rango, o el 
 Petición: `{ id, cmd, params }`, respuesta `{ id, ok, result | error: { code, message } }`.
 Comandos: `ping`, `session.start`, `session.stop`, `settings.get`, `settings.set`, `devices.list`, `voice.clone`, `delay.set`, `stats.get`.
 Eventos: `{ event: 'level'|'transcript'|'translation'|'dub'|'stats'|'cost'|'warn'|'limit'|'status', data }`.
-El shell aplica a video el mismo `delayMs` que el engine aplica al audio.
+El shell aplica el delay nominal y sigue el progreso de fuente mediante `presentation`:
+`{ sessionId, turnId, sourceAgeMs, sourceRate, validForMs }`, emitido tras aceptar la escritura PCM.
+`stats` añade rutas efectivas, latencias p50/p95, colas, rechazos y telemetría nativa.
+El seguimiento es estimado; véase [VIDEO-SYNC.md](VIDEO-SYNC.md).
 
 Ajustes que consume el shell (los lee de las respuestas de `settings.get`/`settings.set` que atraviesan el puente;
 el engine solo los normaliza y persiste):

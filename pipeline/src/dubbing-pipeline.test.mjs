@@ -13,6 +13,23 @@ const GROQ_CHAT = "https://api.groq.com/openai/v1/chat/completions";
 const ELEVEN_TTS = /^https:\/\/api\.elevenlabs\.io\/v1\/text-to-speech\/([^/?]+)\?output_format=(.+)$/;
 const dubAudio = makePcm(300, 48_000);
 
+test('bounded admission rejects overload and avoids TTS after delivery expires', async () => {
+  const gate = deferred();
+  let ttsCalls = 0;
+  const pipeline = new DubbingPipeline({
+    voiceId: 'voice',
+    stt: { async transcribeTurn() { await gate.promise; return { text: 'hola' }; } },
+    translator: { async translate() { return { translation: 'hello' }; } },
+    tts: { async synthesize() { ttsCalls++; throw new Error('must not synthesize'); } },
+  });
+  const pending = Array.from({ length: 4 }, () => pipeline.processTurn(makeTurn({ ms: 1000 }), { shouldSynthesize: () => false }));
+  await assert.rejects(pipeline.processTurn(makeTurn({ ms: 1000 })), { code: 'pipeline_overload' });
+  gate.resolve();
+  assert.deepEqual(await Promise.all(pending), [null, null, null, null]);
+  assert.equal(ttsCalls, 0);
+  assert.deepEqual(pipeline.metrics.queued, { stt: 0, translate: 0, tts: 0 });
+});
+
 /** Pipeline real (STT + traductor + TTS reales) con fetch global mockeado por URL. */
 function buildPipeline(overrides = {}) {
   const stt = new GroqWhisperStt({ apiKey: "gsk", sleep: instantSleep, retries: 0 });

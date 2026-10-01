@@ -15,6 +15,7 @@ import { existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 import { PhraseSegmenter } from "./phrase-segmenter.mjs";
+import { Resampler } from './resample.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 
@@ -82,6 +83,8 @@ export class MicCapture extends EventEmitter {
     this.restartAttempts = 0;
     this.restartTimer = null;
     this.sourceHandlers = null;
+    this.resampler = null;
+    this.pcmTail = Buffer.alloc(0);
   }
 
   /** Argumentos con los que se lanza el helper (expuesto para diagnóstico/tests). */
@@ -100,8 +103,13 @@ export class MicCapture extends EventEmitter {
   start() {
     if (this.running) return;
     this.running = true;
+    const inputRate = this.source?.sampleRate ?? this.sampleRate;
+    this.resampler = inputRate === this.sampleRate ? null : new Resampler(inputRate, this.sampleRate);
+    this.pcmTail = Buffer.alloc(0);
     this.segmenter = new PhraseSegmenter({ sampleRate: this.sampleRate, ...this.segmenterOptions });
     this.segmenter.on("turn", (turn) => this.emit("turn", turn));
+    this.segmenter.on('turn-start', (turn) => this.emit('turn-start', turn));
+    this.segmenter.on('turn-discarded', (turn) => this.emit('turn-discarded', turn));
     this.segmenter.on("level", (level) => this.emit("level", level));
     if (this.source) {
       this.#attachSource(this.source);
@@ -137,10 +145,16 @@ export class MicCapture extends EventEmitter {
 
   #attachSource(source) {
     const onData = (chunk) => {
-      if (this.segmenter) this.segmenter.push(chunk, this.clock());
+      if (!this.segmenter) return;
+      if (!this.resampler) { this.segmenter.push(chunk, this.clock()); return; }
+      const data = this.pcmTail.length ? Buffer.concat([this.pcmTail, chunk]) : chunk;
+      const bytes = data.length - data.length % 2;
+      this.pcmTail = bytes === data.length ? Buffer.alloc(0) : Buffer.from(data.subarray(bytes));
+      this.segmenter.push(this.resampler.process(data.subarray(0, bytes)), this.clock());
     };
     const onEnd = () => {
       if (!this.running) return;
+      if (this.resampler) this.segmenter.push(this.resampler.flush(), this.clock());
       this.segmenter.flush();
       this.emit("sourceEnd");
     };

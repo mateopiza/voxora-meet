@@ -1,7 +1,26 @@
-// Resampler propio (interpolación lineal) para PCM s16le mono.
-// Suficiente para llevar doblajes de 24/44.1 kHz y original de 16 kHz a la
-// tasa del driver (48 kHz): sin dependencias nativas y determinista, que es lo
-// que necesita el buffer de sincronía para contar muestras con exactitud.
+// Band-limited, windowed-sinc conversion for complete TTS utterances.
+// Live original audio arrives at 48 kHz and bypasses this conversion.
+const kernels = new Map();
+const TAPS = 32;
+const PHASES = 256;
+function kernel(fromRate, toRate) {
+  const key = `${fromRate}:${toRate}`;
+  if (kernels.has(key)) return kernels.get(key);
+  const cutoff = Math.min(1, toRate / fromRate) * 0.94;
+  const table = Array.from({ length: PHASES }, (_, phase) => {
+    const weights = new Float64Array(TAPS);
+    for (let j = 0; j < TAPS; j++) {
+      const x = j - (TAPS / 2 - 1) - phase / PHASES;
+      const sinc = Math.abs(x) < 1e-12 ? cutoff : Math.sin(Math.PI * cutoff * x) / (Math.PI * x);
+      const window = 0.5 + 0.5 * Math.cos(Math.PI * x / (TAPS / 2));
+      weights[j] = sinc * window;
+    }
+    return weights;
+  });
+  if (kernels.size >= 8) kernels.delete(kernels.keys().next().value);
+  kernels.set(key, table);
+  return table;
+}
 
 /**
  * Convierte un Buffer/Uint8Array de PCM s16le a Int16Array.
@@ -26,7 +45,7 @@ export function int16ToBuffer(samples) {
 }
 
 /**
- * Remuestrea PCM mono con interpolación lineal.
+ * Remuestrea un turno PCM completo con filtro paso-bajo e interpolación sinc.
  * @param {Int16Array} input
  * @param {number} fromRate
  * @param {number} toRate
@@ -41,15 +60,19 @@ export function resampleInt16(input, fromRate, toRate) {
   const outLength = Math.round((input.length * toRate) / fromRate);
   const out = new Int16Array(outLength);
   const last = input.length - 1;
+  const table = kernel(fromRate, toRate);
   for (let i = 0; i < outLength; i++) {
     const pos = i * ratio;
     const idx = Math.floor(pos);
-    if (idx >= last) {
-      out[i] = input[last];
-      continue;
-    }
     const frac = pos - idx;
-    out[i] = Math.round(input[idx] + (input[idx + 1] - input[idx]) * frac);
+    const weights = table[Math.min(PHASES - 1, Math.floor(frac * PHASES))];
+    let value = 0, sum = 0;
+    for (let j = 0; j < TAPS; j++) {
+      const at = Math.max(0, Math.min(last, idx + j - (TAPS / 2 - 1)));
+      value += input[at] * weights[j];
+      sum += weights[j];
+    }
+    out[i] = Math.max(-32768, Math.min(32767, Math.round(value / sum)));
   }
   return out;
 }

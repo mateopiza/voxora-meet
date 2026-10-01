@@ -481,6 +481,7 @@ void superviseHost() {
 void sendCameraStats(const CameraCapture::Stats& s) {
   json::Value data;
   data.set("width", s.width).set("height", s.height).set("fps", s.captureFps).set("queuedFrames", s.queuedFrames)
+      .set("presentationErrorMs", s.presentationErrorMs).set("presentationMisses", static_cast<double>(s.presentationMisses))
       .set("delayMs", g_captureActive ? s.delayMs : 0).set("published", static_cast<double>(s.published))
       .set("sourceLost", s.sourceLost).set("vcamHostRunning", g_hostUp).set("sharedMemoryOk", s.sharedMemoryOk)
       .set("state", camStateName(reportedCamState())).set("mode", camModeName())
@@ -681,6 +682,13 @@ void scheduleDeviceRefresh() {
 
 // ── Motor ───────────────────────────────────────────────────────────────────
 void onEngineEvent(const std::string& event, const json::Value& data, double engineNowMs) {
+  if (event == "presentation" && g_sessionRunning) {
+    const double rate = data["sourceRate"].asNumber(1);
+    const double transit = std::max(0.0, qpcNowMs() - g_engineLaunchMs.load() - engineNowMs);
+    g_camera.setAudioPresentation(data["sourceAgeMs"].asNumber() + transit * (1 - rate), rate,
+        std::max(1.0, data["validForMs"].asNumber(300) - transit));
+    return;
+  }
   if (event == "log") {
     OutputDebugStringA(("[engine] " + data.dump() + "\n").c_str());
     return;

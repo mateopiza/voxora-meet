@@ -42,6 +42,7 @@ const PASSTHROUGH = new Set([
   'missing_key', 'provider_auth', 'provider_payment', 'provider_quota', 'virtual_mic_missing',
   'voice_missing', 'samples_too_short', 'bad_request', 'bad_state', 'unknown_command', 'module_missing',
   'clone_failed', 'model_unavailable',
+  'audio_route_invalid', 'audio_output_closed', 'audio_output_overload', 'audio_output_timeout', 'audio_capture_closed',
 ]);
 
 // Modelo inexistente, retirado o sin acceso (Groq: 404 model_not_found,

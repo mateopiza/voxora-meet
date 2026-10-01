@@ -12,6 +12,11 @@ indistinguible de la del hablante.
 **Versión actual: `0.2.0`** · Windows 10 2004+ (build 19041) · Node ≥ 22 · Sin dependencias npm
 externas en runtime.
 
+**Audio — actualización 2026-09-30:** entrega única por turno, validación de rutas,
+colas limitadas, original a 48 kHz y telemetría de presentación. Consulta
+[implementación, pruebas y límites](docs/AUDIO-QUALITY-PLAN-2026-09-29.md).
+La prueba nativa con VB-Cable está verificada; la aceptación de calidad en Meet real sigue pendiente.
+
 ---
 
 ## Índice
