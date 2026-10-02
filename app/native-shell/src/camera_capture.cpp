@@ -11,6 +11,7 @@
 #include <cmath>
 
 #include "../../../windows-camera/native/common/frame_producer.h"
+#include "../../../windows-camera/native/common/nv12.h"
 
 using Microsoft::WRL::ComPtr;
 
@@ -115,6 +116,7 @@ bool CameraCapture::start(const std::wstring& symbolicLink, int delayMs, std::ws
   // El hilo de publicación (memoria compartida de la cámara virtual) arranca siempre; si la webcam no
   // abre, queda "perdida" y la cámara virtual muestra su imagen de espera hasta que restartSource() la
   // recupere. El mapping lo abre el hilo en cuanto existe (lo crea la DLL al arrancar el host).
+  if (!frameArrived_) frameArrived_ = CreateEventW(nullptr, FALSE, FALSE, nullptr);
   running_.store(true);
   publishThread_ = std::thread([this] { publishLoop(); });
   return launchCapture(symbolicLink, error);
@@ -180,8 +182,13 @@ std::wstring CameraCapture::activeLink() {
 void CameraCapture::stop() {
   if (!running_.exchange(false)) return;
   captureStop_.store(true);
+  if (frameArrived_) SetEvent(frameArrived_);  // el hilo de publicación sale sin esperar a su timer
   if (captureThread_.joinable()) captureThread_.join();
   if (publishThread_.joinable()) publishThread_.join();
+  if (frameArrived_) {
+    CloseHandle(frameArrived_);
+    frameArrived_ = nullptr;
+  }
   if (startedEvent_) {
     CloseHandle(startedEvent_);
     startedEvent_ = nullptr;
@@ -202,6 +209,7 @@ void CameraCapture::stop() {
   fxAvgMs_.store(0);
   fxPeakMs_.store(0);
   sharedMemoryOk_.store(false);
+  nv12Output_.store(false);
   width_.store(0);
   height_.store(0);
   captureFps_.store(0);
@@ -217,6 +225,7 @@ CameraCapture::Stats CameraCapture::stats() {
   s.captureFps = captureFps_.load();
   s.delayMs = delayMs_.load();
   s.sharedMemoryOk = sharedMemoryOk_.load();
+  s.nv12Output = nv12Output_.load();
   s.published = published_.load();
   s.sourceLost = sourceLost_.load();
   s.effectsMs = fxAvgMs_.load();
@@ -265,8 +274,8 @@ void CameraCapture::recycle(std::vector<uint8_t>&& buffer) {
 }
 
 void CameraCapture::enqueue(Frame&& frame) {
-  std::lock_guard<std::mutex> lock(ringMutex_);
-  const size_t frameBytes = frame.rgba.size();
+  std::unique_lock<std::mutex> lock(ringMutex_);
+  const size_t frameBytes = frame.nv12.size();
   if (frameBytes == 0) return;
   ringCapacity_ = std::max<size_t>(2, kRingBudgetBytes / frameBytes);
   // Frames necesarios para cubrir el delay actual (+ margen de medio segundo).
@@ -276,32 +285,51 @@ void CameraCapture::enqueue(Frame&& frame) {
   const double historyMs = std::min(AudioPresentation::kMaxHistoryMs,
       std::max(nominalHistory, presentation_.active(nowMs) ? nowMs - presentation_.target(nowMs, delayMs_.load()) + 500 : 0));
   const size_t needed = static_cast<size_t>(std::ceil(historyMs / 1000.0 * fps));
-  // Si no cabe, se diezma la cadencia de entrada (p. ej. 30 → 15 fps) en vez de perder el delay.
+  // Si no cabe, se diezma la cadencia de entrada (p. ej. 30 → 15 fps) en vez de perder el delay. Con NV12
+  // y el presupuesto actual no ocurre a 30 fps (ver kRingBudgetBytes).
   const size_t stride = std::max<size_t>(1, (needed + ringCapacity_ - 1) / ringCapacity_);
   frameCounter_++;
   if (frameCounter_ % stride != 0) {
-    recycle(std::move(frame.rgba));
+    recycle(std::move(frame.nv12));
     return;
   }
   ring_.push_back(std::move(frame));
   while (ring_.size() > ringCapacity_) {
-    recycle(std::move(ring_.front().rgba));
+    recycle(std::move(ring_.front().nv12));
     ring_.pop_front();
   }
+  lock.unlock();
+  if (frameArrived_) SetEvent(frameArrived_);
 }
 
 void CameraCapture::publishLoop() {
   ComInit com;
   vcam::FrameProducer producer;  // misma lógica de apertura/publicación que VoxoraMeetFrameWriter
+  // Cada frame sale justo cuando le toca (captura + retraso, o lo que marque el audio) con un timer de
+  // alta resolución, o al llegar si el retraso es 0. Antes se sondeaba con Sleep(16), que en Windows 11
+  // dura ~31 ms (resolución del timer de 15,6 ms por proceso): ~32 Hz con fase arbitraria respecto a la
+  // webcam, así que se saltaban y repetían frames.
+  HANDLE timer = CreateWaitableTimerExW(nullptr, nullptr, CREATE_WAITABLE_TIMER_HIGH_RESOLUTION, TIMER_ALL_ACCESS);
+  if (!timer) timer = CreateWaitableTimerExW(nullptr, nullptr, 0, TIMER_ALL_ACCESS);
   constexpr int64_t kHeartbeatEvery100ns = 5'000'000;  // 500 ms
+  constexpr int64_t kMaxWait100ns = 200'000;            // 20 ms: reevalúa audio, latido y mapping
+  constexpr int64_t kMinWait100ns = 5'000;              // 0,5 ms
   int64_t lastHeartbeat = 0;
   bool heartbeatCleared = false;
   int64_t lastSourceTimestamp = -1;
+  std::vector<uint8_t> rgba;  // conversión para una DLL anterior (solo RGBA8) y para la grabación de prueba
+  auto toRgba = [&rgba](const Frame& f) {
+    rgba.resize(static_cast<size_t>(f.width) * f.height * 4);
+    const uint8_t* y = f.nv12.data();
+    const uint8_t* uv = y + static_cast<size_t>(f.width) * f.height;
+    vcam::nv12ToRgbaRows<false>(y, f.width, uv, f.width, f.width, 0, f.height, rgba.data(), static_cast<ptrdiff_t>(f.width) * 4);
+  };
   while (running_.load()) {
     const int64_t now = vcam::qpcNow100ns();
     Frame toPublish;
     bool found = false;
     bool ringEmpty = false;
+    int64_t nextDue = now + kMaxWait100ns;
     {
       std::lock_guard<std::mutex> lock(ringMutex_);
       const double nowMs = static_cast<double>(now) / 10000.0;
@@ -311,22 +339,32 @@ void CameraCapture::publishLoop() {
           std::max(delayMs_.load() > 0 ? delayMs_.load() + 1500.0 : 500.0, tracking ? nowMs - static_cast<double>(cutoff) / 10000.0 + 500 : 0));
       const int64_t oldest = now - static_cast<int64_t>(historyMs * 10000.0);
       while (!ring_.empty() && ring_.front().timestamp100ns < oldest) {
-        recycle(std::move(ring_.front().rgba));
+        recycle(std::move(ring_.front().nv12));
         ring_.pop_front();
       }
       const Frame* selected = nullptr;
+      const Frame* upcoming = nullptr;
       for (const auto& frame : ring_) {
-        if (frame.timestamp100ns > cutoff) break;
+        if (frame.timestamp100ns > cutoff) {
+          upcoming = &frame;
+          break;
+        }
         selected = &frame;
       }
       if (selected && selected->timestamp100ns != lastSourceTimestamp) {
         toPublish.timestamp100ns = selected->timestamp100ns;
         toPublish.width = selected->width;
         toPublish.height = selected->height;
-        toPublish.rgba = takeBuffer(selected->rgba.size());
-        std::copy(selected->rgba.begin(), selected->rgba.end(), toPublish.rgba.begin());
+        toPublish.nv12 = takeBuffer(selected->nv12.size());
+        std::copy(selected->nv12.begin(), selected->nv12.end(), toPublish.nv12.begin());
         lastSourceTimestamp = selected->timestamp100ns;
         found = true;
+      }
+      // Cuándo pasa a ser elegible el siguiente frame (con el audio mandando, según su reloj).
+      if (upcoming) {
+        const double dueMs = tracking ? presentation_.wallTimeFor(static_cast<double>(upcoming->timestamp100ns) / 10000.0)
+                                      : static_cast<double>(upcoming->timestamp100ns) / 10000.0 + delayMs_.load();
+        if (std::isfinite(dueMs)) nextDue = std::min(nextDue, static_cast<int64_t>(dueMs * 10000.0));
       }
       if (tracking) {
         const double error = selected ? static_cast<double>(cutoff - selected->timestamp100ns) / 10000.0 : historyMs;
@@ -350,17 +388,29 @@ void CameraCapture::publishLoop() {
     sharedMemoryOk_.store(producer.connected());
 
     if (found) {
-      // Presentation timestamps stay monotonic even when selecting older source frames.
-      if (producer.publish(toPublish.rgba.data(), toPublish.width, toPublish.height, now, now))
-        published_.fetch_add(1);
+      // NV12 tal cual si la DLL lo acepta; una DLL anterior solo lee RGBA8. El timestamp de presentación
+      // (`now`) es monótono aunque el contenido sea un frame anterior; el del slot es el de captura.
+      const bool nv12 = producer.consumerAcceptsNv12();
+      nv12Output_.store(nv12);
+      bool converted = false;
+      bool ok = nv12 && producer.publishNv12(toPublish.nv12.data(), toPublish.width, toPublish.height, toPublish.timestamp100ns, now);
+      if (!nv12 && producer.connected()) {
+        toRgba(toPublish);
+        converted = true;
+        ok = producer.publish(rgba.data(), toPublish.width, toPublish.height, toPublish.timestamp100ns, now);
+      }
+      if (ok) published_.fetch_add(1);
       heartbeatCleared = false;
       lastHeartbeat = now;
-      // Lo publicado va también a la grabación de prueba (si hay); el buffer vuelve al pool.
+      // Lo publicado va también a la grabación de prueba (si hay).
       {
         std::lock_guard<std::mutex> lock(tapMutex_);
-        if (tap_) tap_(toPublish.rgba, toPublish.width, toPublish.height, now);
+        if (tap_) {
+          if (!converted) toRgba(toPublish);
+          tap_(rgba, toPublish.width, toPublish.height, now);
+        }
       }
-      recycle(std::move(toPublish.rgba));
+      recycle(std::move(toPublish.nv12));
     } else if (sourceLost_.load() && ringEmpty) {
       // Webcam perdida y ya se publicó todo lo retenido: sin latido la DLL pasa a la imagen de
       // "esperando" en lugar de dejar el último frame congelado. A 0 para que el cambio sea inmediato.
@@ -372,7 +422,24 @@ void CameraCapture::publishLoop() {
       producer.heartbeat(now);
       lastHeartbeat = now;
     }
-    Sleep(1000 / kTargetFps / 2);
+
+    // Hasta que toque el siguiente frame o llegue uno nuevo de la webcam (con retraso 0 sale al llegar).
+    const int64_t wait = std::max(nextDue - vcam::qpcNow100ns(), kMinWait100ns);
+    if (timer) {
+      LARGE_INTEGER due;
+      due.QuadPart = -wait;
+      SetWaitableTimer(timer, &due, 0, nullptr, nullptr, FALSE);
+      HANDLE handles[2] = {timer, frameArrived_};
+      WaitForMultipleObjects(frameArrived_ ? 2 : 1, handles, FALSE, INFINITE);
+    } else {
+      const DWORD ms = static_cast<DWORD>(std::max<int64_t>(1, wait / 10'000));
+      if (frameArrived_) WaitForSingleObject(frameArrived_, ms);
+      else Sleep(ms);
+    }
+  }
+  if (timer) {
+    CancelWaitableTimer(timer);
+    CloseHandle(timer);
   }
   // Al parar: la cámara virtual pasa a la imagen de espera de inmediato (si alguna app la mira).
   producer.clearHeartbeat();
@@ -469,6 +536,9 @@ void CameraCapture::captureLoop(std::wstring symbolicLink) {
   int fxCount = 0;
   LARGE_INTEGER qpcFreq;
   QueryPerformanceFrequency(&qpcFreq);
+  // MFGetSystemTime() y qpcNow100ns() son el mismo reloj (QPC en 100 ns); se mide la diferencia por si acaso.
+  const int64_t clockOffset100ns = vcam::qpcNow100ns() - MFGetSystemTime();
+  int64_t lastCaptured = 0;
   while (running_.load() && !captureStop_.load()) {
     DWORD streamIndex = 0, flags = 0;
     LONGLONG sampleTime = 0;
@@ -534,21 +604,32 @@ void CameraCapture::captureLoop(std::wstring symbolicLink) {
       fxAppliedGen = gen;
     }
 
-    // Una sola pasada del buffer de MF (B,G,R,X) al lienzo RGBA 1280x720 del contrato (R,G,B,A), con
-    // orientación, encuadre y color aplicados; sin copias intermedias.
+    // Instante de captura: el timestamp de Media Foundation (reloj del sistema = QPC) es el de la webcam,
+    // ~40 ms antes de que ReadSample lo entregue y sin el jitter de 16 ms de la entrega. Con él la
+    // cadencia publicada es la de la cámara y el retraso se mide desde la captura real (sincronía labial).
+    // Si no es coherente (otro reloj, cero) se usa el instante de llegada. Siempre creciente: el ring
+    // está ordenado por tiempo.
+    const int64_t arrival = vcam::qpcNow100ns();
+    int64_t captured = sampleTime + clockOffset100ns;
+    if (sampleTime <= 0 || captured > arrival || captured < arrival - 10'000'000) captured = arrival;
+    captured = std::max(captured, lastCaptured + 1);
+    lastCaptured = captured;
+
+    // Una sola pasada del buffer de MF (B,G,R,X) al lienzo 1280x720 con orientación, encuadre y color, y
+    // de ahí a NV12 (el formato del ring y de la cámara virtual).
     Frame frame;
-    frame.timestamp100ns = vcam::qpcNow100ns();
+    frame.timestamp100ns = captured;
     frame.width = kTargetWidth;
     frame.height = kTargetHeight;
     const size_t rowBytes = static_cast<size_t>(width) * 4;
     const size_t absPitch = static_cast<size_t>(pitch < 0 ? -pitch : pitch);
     const bool valid = absPitch >= rowBytes && curLen >= absPitch * height;
     if (valid) {
-      frame.rgba = takeBuffer(static_cast<size_t>(kTargetWidth) * kTargetHeight * 4);
+      frame.nv12 = takeBuffer(vcam::nv12Bytes(kTargetWidth, kTargetHeight));
       LARGE_INTEGER t0, t1;
       QueryPerformanceCounter(&t0);
-      effects.render(firstRow, static_cast<ptrdiff_t>(pitch), static_cast<int>(width), static_cast<int>(height), frame.rgba.data(),
-                     kTargetWidth, kTargetHeight);
+      effects.renderNv12(firstRow, static_cast<ptrdiff_t>(pitch), static_cast<int>(width), static_cast<int>(height), frame.nv12.data(),
+                         kTargetWidth, kTargetHeight);
       QueryPerformanceCounter(&t1);
       const double ms = static_cast<double>(t1.QuadPart - t0.QuadPart) * 1000.0 / static_cast<double>(qpcFreq.QuadPart);
       fxSumMs += ms;

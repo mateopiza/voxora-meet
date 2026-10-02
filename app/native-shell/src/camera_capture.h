@@ -1,9 +1,13 @@
 // Captura de webcam con Media Foundation (IMFSourceReader, RGB32 1280x720@30), imagen de la cámara
 // (video_effects.h: espejo, volteo, rotación, 16:9/9:16, zoom, color) aplicada en la misma pasada que
-// convierte el buffer de MF al lienzo RGBA 1280x720, ring de frames con el retraso de video vigente (0
+// convierte el buffer de MF al lienzo 1280x720, ring de frames NV12 con el retraso de video vigente (0
 // fuera de la sesión de doblaje, `delayMs` durante ella; ver docs/VIDEO-SYNC.md) y publicación en la
 // memoria compartida de la cámara virtual con el productor común
-// (windows-camera/native/common/frame_producer.h, el mismo que VoxoraMeetFrameWriter).
+// (windows-camera/native/common/frame_producer.h, el mismo que VoxoraMeetFrameWriter): NV12 tal cual si
+// la DLL lo acepta, RGBA8 si es una DLL anterior.
+//
+// Cadencia: cada frame lleva el instante de captura de la webcam (timestamp de Media Foundation, mismo
+// reloj QPC) y sale exactamente a captura + retraso con un waitable timer de alta resolución.
 //
 // El host de la cámara virtual (VoxoraMeetVCamHost.exe) NO lo gestiona esta clase: ver vcam_host.h.
 #pragma once
@@ -46,6 +50,7 @@ class CameraCapture {
     int queuedFrames = 0;
     int delayMs = 0;
     bool sharedMemoryOk = false;  // el productor tiene abierto el mapping de la DLL
+    bool nv12Output = false;      // la DLL acepta NV12 y se publica sin convertir (false = RGBA8)
     bool sourceLost = false;
     uint64_t published = 0;
     int outputWidth = kTargetWidth;   // lienzo que se publica (siempre 1280x720)
@@ -55,8 +60,8 @@ class CameraCapture {
   };
 
   // Recibe cada frame justo después de publicarlo en la cámara virtual (RGBA del lienzo, tras efectos y
-  // con el retraso vigente): exactamente lo que ve Meet. Se llama desde el hilo de publicación; puede
-  // quedarse el buffer intercambiándolo por otro del mismo tamaño (o dejarlo tal cual).
+  // con el retraso vigente; reconvertido del NV12 publicado): exactamente lo que ve Meet. Se llama desde
+  // el hilo de publicación; puede quedarse el buffer intercambiándolo por otro (de cualquier tamaño).
   using FrameTap = std::function<void(std::vector<uint8_t>& rgba, uint32_t width, uint32_t height, int64_t timestamp100ns)>;
 
   CameraCapture() = default;
@@ -95,21 +100,24 @@ class CameraCapture {
   static constexpr int kTargetHeight = 720;
   static constexpr int kTargetFps = 30;
   static constexpr int kMaxDelayMs = 6000;
-  static constexpr size_t kRingBudgetBytes = 640ull * 1024 * 1024;
+  // NV12 1280x720 = 1,32 MiB por frame → ~290 frames (9,7 s a 30 fps): cubre el historial máximo (7,5 s)
+  // sin diezmar. Con RGBA (3,5 MiB) y 640 MiB solo cabían 6 s y a partir de delayMs ≈ 4,6 s se guardaba
+  // un frame de cada dos: Meet recibía 15 fps durante todo el doblaje.
+  static constexpr size_t kRingBudgetBytes = 384ull * 1024 * 1024;
 
  private:
   struct Frame {
-    int64_t timestamp100ns = 0;
+    int64_t timestamp100ns = 0;  // instante de captura (QPC, 100 ns)
     uint32_t width = 0;
     uint32_t height = 0;
-    std::vector<uint8_t> rgba;
+    std::vector<uint8_t> nv12;   // NV12 compacto (windows-camera/native/common/nv12.h)
   };
 
   bool launchCapture(const std::wstring& symbolicLink, std::wstring& error);
   void captureLoop(std::wstring symbolicLink);
   void publishLoop();
   void enqueue(Frame&& frame);
-  std::vector<uint8_t> takeBuffer(size_t bytes);  // del pool (evita reservar 3,6 MB por frame)
+  std::vector<uint8_t> takeBuffer(size_t bytes);  // del pool (evita reservar 1,4 MB por frame)
   void recycle(std::vector<uint8_t>&& buffer);
 
   std::atomic<bool> running_{false};
@@ -132,6 +140,8 @@ class CameraCapture {
   std::atomic<int> height_{0};
   std::atomic<double> captureFps_{0};
   std::atomic<bool> sharedMemoryOk_{false};
+  std::atomic<bool> nv12Output_{false};
+  HANDLE frameArrived_ = nullptr;  // auto-reset: enqueue() despierta al hilo de publicación
   std::wstring startError_;
   std::atomic<bool> startFailed_{false};
   HANDLE startedEvent_ = nullptr;

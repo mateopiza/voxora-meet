@@ -1,7 +1,7 @@
 // Cliente S3 mínimo (AWS Signature V4, estilo de ruta) para el bucket de actualizaciones.
 // Sin dependencias: solo node:crypto + fetch. Lo usan scripts/publish.mjs y sus pruebas.
 //
-// Credenciales: S3_ACCESS_KEY_ID / S3_SECRET_ACCESS_KEY (o AWS_*) de, por orden de prioridad,
+// Credenciales: VOXORA_UPDATE_S3_ACCESS_KEY_ID / VOXORA_UPDATE_S3_SECRET_ACCESS_KEY (o S3_* / AWS_*) de, por orden de prioridad,
 // process.env > <proyecto>/.env > CORE/.env. Nunca se imprimen ni viajan al cliente: la app solo
 // descarga por HTTPS (updater.cpp) lo que publish.mjs deja con lectura pública.
 import { createHash, createHmac } from 'node:crypto';
@@ -43,8 +43,8 @@ export function loadS3Config({ root = ROOT, env = process.env } = {}) {
     bucket: pick('VOXORA_UPDATE_S3_BUCKET') || DEFAULTS.bucket,
     region: pick('VOXORA_UPDATE_S3_REGION') || DEFAULTS.region,
     prefix: (pick('VOXORA_UPDATE_S3_PREFIX') || DEFAULTS.prefix).replace(/^\/+/, '').replace(/\/?$/, '/'),
-    accessKeyId: pick('S3_ACCESS_KEY_ID', 'AWS_ACCESS_KEY_ID'),
-    secretAccessKey: pick('S3_SECRET_ACCESS_KEY', 'AWS_SECRET_ACCESS_KEY'),
+    accessKeyId: pick('VOXORA_UPDATE_S3_ACCESS_KEY_ID', 'S3_ACCESS_KEY_ID', 'AWS_ACCESS_KEY_ID'),
+    secretAccessKey: pick('VOXORA_UPDATE_S3_SECRET_ACCESS_KEY', 'S3_SECRET_ACCESS_KEY', 'AWS_SECRET_ACCESS_KEY'),
   };
   cfg.hasCredentials = Boolean(cfg.accessKeyId && cfg.secretAccessKey);
   return cfg;

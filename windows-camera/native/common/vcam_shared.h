@@ -28,7 +28,7 @@ inline constexpr wchar_t kFriendlyName[] = L"VOXORA Meet Camera";
 // mientras no exista. Medido: la DLL lo crea ≈0,6 s después de que el host haga Start (cuando el
 // FrameServer instancia la fuente, haya o no apps mirando) y lo suelta al parar el host; si un
 // productor lo retiene, el objeto sobrevive y la DLL recargada reabre el mismo. El evento no necesita
-// privilegio, cualquiera lo crea (la DLL no lo espera: produce con su propio timer).
+// privilegio, cualquiera lo crea (la DLL lo espera para entregar cada frame al llegar; timer de respaldo).
 inline constexpr wchar_t kFramesMappingName[] = L"Global\\VoxoraMeetVCamFrames";
 inline constexpr wchar_t kFrameReadyEventName[] = L"Global\\VoxoraMeetVCamFrameReady";
 
@@ -39,10 +39,18 @@ inline constexpr wchar_t kSharedObjectsSddl[] = L"D:(A;;GA;;;WD)(A;;GA;;;LS)(A;;
 inline constexpr uint32_t kMagic = 0x4D435856;  // 'VXCM' en little-endian
 inline constexpr uint32_t kVersion = 1;
 
-// Formatos de píxel del productor. Por ahora solo RGBA de 8 bits por canal (orden de bytes R,G,B,A).
+// Formatos de píxel del productor.
+//   RGBA8 (bytes R,G,B,A): lo entienden todas las versiones de la DLL; lo usa VoxoraMeetFrameWriter.
+//   NV12  (BT.601 rango limitado, compacto, ancho/alto pares; ver nv12.h): lo que Chrome/Meet piden a la
+//         cámara virtual, así la DLL lo copia sin convertir. Solo se publica si la DLL anuncia
+//         kConsumerCapNV12 en SharedHeader::consumerCaps (una DLL anterior deja el campo a 0).
 enum PixelFormat : uint32_t {
   PixelFormat_RGBA8 = 1,
+  PixelFormat_NV12 = 2,
 };
+
+// Bits de SharedHeader::consumerCaps (los escribe la DLL al abrir/crear el mapping).
+inline constexpr uint32_t kConsumerCapNV12 = 1u << 0;
 
 inline constexpr uint32_t kSlotCount = 3;
 inline constexpr uint32_t kMaxWidth = 1920;
@@ -63,7 +71,8 @@ struct SharedHeader {
   int64_t  timestamp100ns;   // QPC en unidades de 100 ns del último frame (reloj del sistema)
   int64_t  producerHeartbeat100ns;  // QPC en 100 ns de la última escritura (detección de productor vivo)
   uint32_t slotStride;       // bytes por slot (cabecera de slot + píxeles)
-  uint32_t reserved[3];
+  uint32_t consumerCaps;     // kConsumerCap*: formatos que acepta la DLL (0 = solo RGBA8, DLL anterior)
+  uint32_t reserved[2];
 };
 static_assert(sizeof(SharedHeader) == 64, "SharedHeader debe medir 64 bytes");
 

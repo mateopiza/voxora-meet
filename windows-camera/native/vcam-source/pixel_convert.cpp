@@ -1,5 +1,7 @@
 #include "pixel_convert.h"
 
+#include "../common/nv12.h"
+
 #include <algorithm>
 #include <cstring>
 
@@ -81,38 +83,24 @@ void copyNv12(const uint8_t* src, uint32_t width, uint32_t height, uint8_t* dst,
     std::memcpy(dstUv + size_t(y) * pitch, srcUv + size_t(y) * width, width);
 }
 
+void nv12ToBgrx(const uint8_t* nv12, uint32_t width, uint32_t height, uint8_t* dst, int32_t pitch) {
+  nv12ToRgbaRows<true>(nv12, width, nv12 + size_t(width) * height, width, width, 0, height, dst, pitch);
+}
+
 void scaleRgbaLetterbox(const uint8_t* src, uint32_t srcW, uint32_t srcH, uint8_t* dst, uint32_t dstW,
                         uint32_t dstH) {
   if (srcW == dstW && srcH == dstH) {
     std::memcpy(dst, src, size_t(dstW) * dstH * 4);
     return;
   }
-  // Área destino que preserva la relación de aspecto.
-  uint32_t targetW = dstW;
-  uint32_t targetH = static_cast<uint32_t>(uint64_t(dstW) * srcH / srcW);
-  if (targetH > dstH) {
-    targetH = dstH;
-    targetW = static_cast<uint32_t>(uint64_t(dstH) * srcW / srcH);
+  // Área destino que preserva la relación de aspecto; barras negras opacas alrededor. Bilineal: el
+  // vecino más cercano (lo de antes) dejaba bordes dentados al pasar de 1280x720 a 1920x1080.
+  const FitRect r = fitRect(srcW, srcH, dstW, dstH);
+  if (r.w != dstW || r.h != dstH) {
+    uint32_t* px = reinterpret_cast<uint32_t*>(dst);
+    std::fill(px, px + size_t(dstW) * dstH, 0xFF000000u);
   }
-  targetW = std::max<uint32_t>(2, targetW & ~1u);
-  targetH = std::max<uint32_t>(2, targetH & ~1u);
-  const uint32_t offsetX = (dstW - targetW) / 2;
-  const uint32_t offsetY = (dstH - targetH) / 2;
-
-  // Barras negras opacas.
-  std::memset(dst, 0, size_t(dstW) * dstH * 4);
-  for (size_t i = 3; i < size_t(dstW) * dstH * 4; i += 4) dst[i] = 0xFF;
-
-  // Tabla de mapeo de columnas para no recalcular por fila.
-  std::vector<uint32_t> columnMap(targetW);
-  for (uint32_t x = 0; x < targetW; ++x) columnMap[x] = static_cast<uint32_t>(uint64_t(x) * srcW / targetW);
-
-  for (uint32_t y = 0; y < targetH; ++y) {
-    const uint32_t sy = static_cast<uint32_t>(uint64_t(y) * srcH / targetH);
-    const uint32_t* srcRow = reinterpret_cast<const uint32_t*>(src + size_t(sy) * srcW * 4);
-    uint32_t* dstRow = reinterpret_cast<uint32_t*>(dst + (size_t(y + offsetY) * dstW + offsetX) * 4);
-    for (uint32_t x = 0; x < targetW; ++x) dstRow[x] = srcRow[columnMap[x]];
-  }
+  scalePlaneBilinear<4>(src, size_t(srcW) * 4, srcW, srcH, dst + (size_t(r.y) * dstW + r.x) * 4, size_t(dstW) * 4, r.w, r.h);
 }
 
 }  // namespace voxora::vcam

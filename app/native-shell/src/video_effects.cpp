@@ -8,6 +8,8 @@
 #include <mutex>
 #include <thread>
 
+#include "nv12.h"
+
 namespace voxora {
 
 namespace {
@@ -474,6 +476,21 @@ void VideoEffectsRenderer::render(const uint8_t* src, ptrdiff_t pitch, int srcW,
     fn(job, 0, rectH_);
   }
   if (params_.portrait && (rectW_ < dstW || rectH_ < dstH)) renderBackground(src, dst, dstW, dstH);
+}
+
+void VideoEffectsRenderer::renderNv12(const uint8_t* src, ptrdiff_t pitch, int srcW, int srcH, uint8_t* nv12, int dstW, int dstH) {
+  if (!nv12 || dstW < 2 || dstH < 2 || ((dstW | dstH) & 1)) return;
+  canvas_.resize(static_cast<size_t>(dstW) * dstH * 4);
+  render(src, pitch, srcW, srcH, canvas_.data(), dstW, dstH);
+  if (!pool_) pool_ = std::make_unique<RowPool>();
+  const uint32_t w = static_cast<uint32_t>(dstW), h = static_cast<uint32_t>(dstH);
+  uint8_t* yPlane = nv12;
+  uint8_t* uvPlane = nv12 + static_cast<size_t>(w) * h;
+  // Por pares de filas (cada fila de croma sale de dos de luma).
+  pool_->run(dstH / 2, [&](int p0, int p1) {
+    vcam::rgbaToNv12Rows(canvas_.data(), static_cast<size_t>(w) * 4, w, h, static_cast<uint32_t>(p0) * 2, static_cast<uint32_t>(p1) * 2,
+                         yPlane, w, uvPlane, w);
+  });
 }
 
 

@@ -60,6 +60,11 @@ class VideoEffectsRenderer {
   // la cámara virtual). No reserva memoria salvo al cambiar tamaños o parámetros.
   void render(const uint8_t* src, ptrdiff_t pitch, int srcW, int srcH, uint8_t* dst, int dstW, int dstH);
 
+  // Igual que render() pero entrega NV12 compacto (BT.601 limitado, windows-camera/native/common/nv12.h),
+  // el formato del ring y de la cámara virtual: render() a un lienzo RGBA interno y conversión por
+  // franjas de filas en paralelo. dstW y dstH pares.
+  void renderNv12(const uint8_t* src, ptrdiff_t pitch, int srcW, int srcH, uint8_t* nv12, int dstW, int dstH);
+
  private:
   class RowPool;  // franjas de filas en paralelo (solo se crea si hay interpolación o color)
   std::unique_ptr<RowPool> pool_;
@@ -75,6 +80,7 @@ class VideoEffectsRenderer {
   void renderBackground(const uint8_t* src, uint8_t* dst, int dstW, int dstH);
 
   VideoEffectsParams params_;
+  std::vector<uint8_t> canvas_;  // lienzo RGBA de renderNv12()
   bool geometryDirty_ = true;
   bool colorDirty_ = true;
 

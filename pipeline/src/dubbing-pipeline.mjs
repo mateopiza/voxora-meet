@@ -156,6 +156,23 @@ export class DubbingPipeline extends EventEmitter {
   }
 
   /**
+   * Cambia en caliente el cliente de STT y/o el traductor (cambio de proveedor);
+   * rige desde el siguiente turno. La memoria de contexto pasa al traductor nuevo.
+   */
+  replaceStages({ stt, translator } = {}) {
+    if (stt) {
+      if (!stt.transcribeTurn) throw new TypeError("DubbingPipeline: `stt.transcribeTurn` obligatorio");
+      this.#stt = stt;
+    }
+    if (translator) {
+      if (!translator.translate) throw new TypeError("DubbingPipeline: `translator.translate` obligatorio");
+      for (const turn of this.#translator.memory ?? []) translator.remember?.(turn.source, turn.translation);
+      this.#translator = translator;
+    }
+    return this.currentSettings();
+  }
+
+  /**
    * Aplica en caliente los ajustes planos del engine (protocolo v3); rige desde
    * el siguiente turno (cada etapa congela sus parámetros al arrancar el turno).
    * Claves: sttModel, sttTemperature, translateModel, translateTemperature,
@@ -190,8 +207,10 @@ export class DubbingPipeline extends EventEmitter {
     const tr = this.#translator;
     const tts = this.#tts;
     return {
+      sttProvider: stt.provider ?? null,
       sttModel: stt.model ?? null,
       sttTemperature: stt.temperature ?? null,
+      translateProvider: tr.provider ?? null,
       translateModel: tr.model ?? null,
       translateTemperature: tr.temperature ?? null,
       translateReasoningEffort: tr.reasoningEffort ?? null,

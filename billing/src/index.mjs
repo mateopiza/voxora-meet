@@ -37,10 +37,36 @@ export const DEFAULT_MODELS = Object.freeze({
 export const STT_PRICES = Object.freeze({
   "whisper-large-v3": 0.111,
   "whisper-large-v3-turbo": 0.04,
+  // ElevenLabs Scribe: tarifa de API por hora de audio (https://elevenlabs.io/pricing/api,
+  // referencia 2026-10-01; con `keyterms` ElevenLabs cobra un recargo que no se modela).
+  scribe_v2: 0.4,
+  scribe_v1: 0.4,
+  // OpenAI (https://openai.com/api/pricing, referencia 2026-10-01): 0.006 USD/min
+  // (whisper-1, gpt-4o-transcribe) y 0.003 USD/min (gpt-4o-mini-transcribe).
+  "whisper-1": 0.36,
+  "gpt-4o-transcribe": 0.36,
+  "gpt-4o-mini-transcribe": 0.18,
 });
 /** STT desconocido: se asume el Whisper más caro (estimación conservadora). */
 export const DEFAULT_STT_USD_PER_HOUR = 0.111;
+/** STT desconocido de ElevenLabs u OpenAI: el más caro de su tabla. */
+export const DEFAULT_PAID_STT_USD_PER_HOUR = 0.4;
+/** Mínimo facturable por request: solo Groq (ElevenLabs y OpenAI cobran el audio real). */
 export const STT_MIN_BILLABLE_MS = 10_000;
+
+/** Proveedor de un modelo de STT según su id (`scribe_*` ElevenLabs, `whisper-1`/`*-transcribe` OpenAI). */
+export function sttProviderOf(model) {
+  const id = String(model ?? "").toLowerCase();
+  if (/^scribe/.test(id)) return "elevenlabs";
+  if (id === "whisper-1" || /transcribe/.test(id)) return "openai";
+  return "groq";
+}
+
+/** Proveedor de un modelo de chat según su id (los de OpenAI no llevan prefijo `org/`). */
+export function chatProviderOf(model) {
+  const id = String(model ?? "").toLowerCase();
+  return !id.includes("/") && /^(gpt-|o[134]|chatgpt-)/.test(id) ? "openai" : "groq";
+}
 
 /**
  * Groq chat completions, USD por 1M tokens de entrada / salida.
@@ -50,6 +76,9 @@ export const STT_MIN_BILLABLE_MS = 10_000;
  *   - llama-3.3-70b-versatile, llama-3.1-8b-instant, kimi-k2, qwen3-32b:
  *     https://groq.com/pricing (tabla publicada 2025-09; ya no aparecen en el
  *     listado en vivo de la cuenta, se conservan por si el usuario los tiene).
+ *   - OpenAI (gpt-4*, gpt-5*): https://openai.com/api/pricing (referencia
+ *     2026-10-01; `/v1/models` de OpenAI no trae precios). Los snapshots con
+ *     fecha (`gpt-4.1-2025-04-14`) heredan el precio de su modelo base.
  * Los tokens de razonamiento se facturan como salida.
  */
 export const CHAT_PRICES = Object.freeze({
@@ -62,9 +91,21 @@ export const CHAT_PRICES = Object.freeze({
   "llama-3.1-8b-instant": Object.freeze({ input: 0.05, output: 0.08 }),
   "moonshotai/kimi-k2-instruct": Object.freeze({ input: 1.0, output: 3.0 }),
   "moonshotai/kimi-k2-instruct-0905": Object.freeze({ input: 1.0, output: 3.0 }),
+  "gpt-4.1": Object.freeze({ input: 2.0, output: 8.0 }),
+  "gpt-4.1-mini": Object.freeze({ input: 0.4, output: 1.6 }),
+  "gpt-4.1-nano": Object.freeze({ input: 0.1, output: 0.4 }),
+  "gpt-4o": Object.freeze({ input: 2.5, output: 10.0 }),
+  "gpt-4o-mini": Object.freeze({ input: 0.15, output: 0.6 }),
+  "gpt-4-turbo": Object.freeze({ input: 10.0, output: 30.0 }),
+  "gpt-4": Object.freeze({ input: 30.0, output: 60.0 }),
+  "gpt-5": Object.freeze({ input: 1.25, output: 10.0 }),
+  "gpt-5-mini": Object.freeze({ input: 0.25, output: 2.0 }),
+  "gpt-5-nano": Object.freeze({ input: 0.05, output: 0.4 }),
 });
-/** Modelo de chat sin precio conocido: igual o más caro que el más caro de la tabla. */
+/** Modelo de chat de Groq sin precio conocido: igual o más caro que el más caro de su tabla. */
 export const DEFAULT_CHAT_PRICE = Object.freeze({ input: 1.0, output: 4.0 });
+/** Modelo de chat de OpenAI sin precio conocido: estimación conservadora (gama gpt-4o). */
+export const DEFAULT_OPENAI_CHAT_PRICE = Object.freeze({ input: 2.5, output: 10.0 });
 
 /**
  * ElevenLabs: 1 crédito por carácter × `character_cost_multiplier` del modelo.
@@ -97,24 +138,27 @@ function cleanModelId(id, fallback) {
 export function sttPriceFor(model) {
   const id = cleanModelId(model, DEFAULT_MODELS.stt);
   const known = Object.hasOwn(STT_PRICES, id.toLowerCase());
-  return { model: id, usdPerHour: known ? STT_PRICES[id.toLowerCase()] : DEFAULT_STT_USD_PER_HOUR, known };
+  const fallback = sttProviderOf(id) === "groq" ? DEFAULT_STT_USD_PER_HOUR : DEFAULT_PAID_STT_USD_PER_HOUR;
+  return { model: id, usdPerHour: known ? STT_PRICES[id.toLowerCase()] : fallback, known };
 }
 
 /**
- * Precio de un modelo de chat de Groq: `{ model, input, output, known }` en USD
- * por 1M tokens. Acepta el id con o sin prefijo de proveedor (`gpt-oss-120b`).
+ * Precio de un modelo de chat (Groq u OpenAI): `{ model, input, output, known }`
+ * en USD por 1M tokens. Acepta el id con o sin prefijo de proveedor
+ * (`gpt-oss-120b`) y los snapshots con fecha de OpenAI.
  */
 export function chatPriceFor(model) {
   const id = cleanModelId(model, DEFAULT_MODELS.translate);
   const key = id.toLowerCase();
-  let price = CHAT_PRICES[key];
+  let price = CHAT_PRICES[key] ?? CHAT_PRICES[key.replace(/-\d{4}-\d{2}-\d{2}$/, "")];
   if (!price) {
     const tail = key.split("/").at(-1);
     const match = Object.keys(CHAT_PRICES).find((k) => k.split("/").at(-1) === tail);
     if (match) price = CHAT_PRICES[match];
     else if (/kimi-k2/.test(key)) price = CHAT_PRICES["moonshotai/kimi-k2-instruct"];
   }
-  return price ? { model: id, input: price.input, output: price.output, known: true } : { model: id, ...DEFAULT_CHAT_PRICE, known: false };
+  if (price) return { model: id, input: price.input, output: price.output, known: true };
+  return { model: id, ...(chatProviderOf(id) === "openai" ? DEFAULT_OPENAI_CHAT_PRICE : DEFAULT_CHAT_PRICE), known: false };
 }
 
 /** Multiplicador de costo por carácter del modelo TTS (`override` = dato en vivo del catálogo). */
@@ -137,14 +181,14 @@ export function pricingFor({ sttModel, translateModel, ttsModel, ttsCostMultipli
   const multiplier = ttsCostMultiplierFor(ttsId, ttsCostMultiplier);
   return Object.freeze({
     stt: Object.freeze({
-      provider: "groq",
+      provider: sttProviderOf(stt.model),
       model: stt.model,
       unit: "hora de audio",
       usdPerUnit: stt.usdPerHour,
-      minBillableMs: STT_MIN_BILLABLE_MS,
+      minBillableMs: sttProviderOf(stt.model) === "groq" ? STT_MIN_BILLABLE_MS : 0,
     }),
     translate: Object.freeze({
-      provider: "groq",
+      provider: chatProviderOf(chat.model),
       model: chat.model,
       unit: "1M tokens",
       usdPerInputUnit: chat.input,
@@ -262,6 +306,10 @@ export function reasoningTokensPerTurn(translateModel, effort, table = MEETING_A
     return table[e] ?? table.low;
   }
   if (/qwen-?3/.test(id)) return level === "none" || level === "low" ? 0 : table.default ?? table.medium;
+  if (/^(gpt-5|o[134])/.test(id)) {
+    const e = level === "none" ? "low" : level === "default" ? "medium" : level;
+    return table[e] ?? table.low;
+  }
   return 0;
 }
 

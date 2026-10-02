@@ -19,8 +19,20 @@ export const APP_DIR_NAME = 'VOXORA Meet';
 export const SETTINGS_FILE = 'settings.json';
 export const PROVIDER_KEYS_FILE = 'provider-keys.dpapi';
 
-// groq: STT (Whisper) + traducción (chat). elevenlabs: TTS con voz clonada.
-export const PROVIDER_KEY_NAMES = Object.freeze(['groq', 'elevenlabs']);
+// groq: STT (Whisper) + traducción (chat). elevenlabs: TTS con voz clonada y STT (Scribe).
+// openai: traducción (GPT) y STT. Solo hacen falta las de los proveedores elegidos
+// en `sttProvider` / `translateProvider` (más elevenlabs, siempre, por el TTS).
+export const PROVIDER_KEY_NAMES = Object.freeze(['groq', 'elevenlabs', 'openai']);
+
+/** Proveedores que puede usar cada etapa (el TTS es siempre ElevenLabs). */
+export const STT_PROVIDERS = Object.freeze(['groq', 'elevenlabs', 'openai']);
+export const TRANSLATE_PROVIDERS = Object.freeze(['groq', 'openai']);
+
+/** Modelo que se usa al cambiar de proveedor (o si el guardado no es de ese proveedor). */
+export const PROVIDER_MODEL_DEFAULTS = Object.freeze({
+  stt: Object.freeze({ groq: 'whisper-large-v3', elevenlabs: 'scribe_v2', openai: 'gpt-4o-transcribe' }),
+  translate: Object.freeze({ groq: 'openai/gpt-oss-120b', openai: 'gpt-4.1' }),
+});
 
 export const DEFAULTS = Object.freeze({
   delayMs: 3000,
@@ -64,8 +76,10 @@ export const DEFAULTS = Object.freeze({
   // Endpoint donde además se escucha el doblaje localmente ('' = apagado).
   monitorDevice: '',
   // ── Protocolo v3: modelos y parámetros por etapa ──
+  sttProvider: 'groq',            // 'groq' | 'elevenlabs' (Scribe) | 'openai'
   sttModel: 'whisper-large-v3',
   sttTemperature: 0,
+  translateProvider: 'groq',      // 'groq' | 'openai'
   translateModel: 'openai/gpt-oss-120b',
   translateTemperature: 0.2,
   translateReasoningEffort: 'low',
@@ -80,7 +94,8 @@ export const DEFAULTS = Object.freeze({
 
 /** Claves de ajustes de modelo (protocolo v3): las que acepta `cost.estimate` en `overrides`. */
 export const MODEL_SETTING_KEYS = Object.freeze([
-  'sttModel', 'sttTemperature', 'translateModel', 'translateTemperature', 'translateReasoningEffort', 'memoryTurns',
+  'sttProvider', 'sttModel', 'sttTemperature',
+  'translateProvider', 'translateModel', 'translateTemperature', 'translateReasoningEffort', 'memoryTurns',
   'ttsModel', 'ttsStability', 'ttsSimilarityBoost', 'ttsStyle', 'ttsSpeed', 'ttsSpeakerBoost', 'ttsTextNormalization',
 ]);
 
@@ -89,7 +104,7 @@ const TONES = new Set(['professional', 'formal', 'neutral']);
 const STYLE_INSTRUCTION_MAX = 400;
 const FALLBACKS = new Set(['silence', 'original', 'duck']);
 const LATE_POLICIES = new Set(['play', 'drop']);
-// low|medium|high (gpt-oss); none|default (Qwen3). Debe coincidir con
+// low|medium|high (gpt-oss, OpenAI); none|default (Qwen3). Debe coincidir con
 // REASONING_EFFORTS de pipeline/src/translate/groq-translate.mjs.
 export const REASONING_EFFORTS = Object.freeze(['low', 'medium', 'high', 'none', 'default']);
 export const TEXT_NORMALIZATION = Object.freeze(['auto', 'on', 'off']);
@@ -146,6 +161,19 @@ export function cleanModelId(value, fallback, mustMatch = null) {
   return id;
 }
 
+/** ¿El id es de un modelo de transcripción de ese proveedor? */
+export function sttModelFits(provider, id) {
+  if (provider === 'elevenlabs') return /^scribe_/i.test(id) && !/realtime/i.test(id);
+  if (provider === 'openai') return /^(whisper-1$|gpt-4o(-mini)?-transcribe)/i.test(id) && !/diarize/i.test(id);
+  return /whisper/i.test(id) && id.toLowerCase() !== 'whisper-1';
+}
+
+/** ¿El id es de un modelo de chat de ese proveedor? (los de OpenAI no llevan prefijo `org/`). */
+export function translateModelFits(provider, id) {
+  const openai = !id.includes('/') && /^(gpt-|o[134]|chatgpt-)/i.test(id);
+  return provider === 'openai' ? openai : !openai;
+}
+
 function cleanEnum(value, allowed, fallback) {
   const v = typeof value === 'string' ? value.trim().toLowerCase() : value;
   return allowed.includes(v) ? v : fallback;
@@ -171,6 +199,11 @@ function cleanAspect(value, fallback) {
 /** Normaliza un objeto de ajustes: tipos, rangos y valores permitidos. */
 export function normalizeSettings(raw = {}) {
   const input = raw && typeof raw === 'object' ? raw : {};
+  // El modelo debe ser del proveedor elegido: si no lo es, se usa el de por defecto de ese proveedor.
+  const sttProvider = cleanEnum(input.sttProvider, STT_PROVIDERS, DEFAULTS.sttProvider);
+  const sttModel = cleanModelId(input.sttModel, '');
+  const translateProvider = cleanEnum(input.translateProvider, TRANSLATE_PROVIDERS, DEFAULTS.translateProvider);
+  const translateModel = cleanModelId(input.translateModel, '');
   return {
     delayMs: cleanInt(input.delayMs, DEFAULTS.delayMs, 2000, 6000),
     targetLanguage: cleanString(input.targetLanguage, DEFAULTS.targetLanguage, 16) || DEFAULTS.targetLanguage,
@@ -203,9 +236,11 @@ export function normalizeSettings(raw = {}) {
     nodePath: cleanString(input.nodePath, DEFAULTS.nodePath, 1024),
     virtualMicDevice: cleanString(input.virtualMicDevice, DEFAULTS.virtualMicDevice, 256) || DEFAULTS.virtualMicDevice,
     monitorDevice: cleanString(input.monitorDevice, DEFAULTS.monitorDevice, 256),
-    sttModel: cleanModelId(input.sttModel, DEFAULTS.sttModel, /whisper/i),
+    sttProvider,
+    sttModel: sttModel && sttModelFits(sttProvider, sttModel) ? sttModel : PROVIDER_MODEL_DEFAULTS.stt[sttProvider],
     sttTemperature: cleanFloat(input.sttTemperature, DEFAULTS.sttTemperature, 0, 1),
-    translateModel: cleanModelId(input.translateModel, DEFAULTS.translateModel),
+    translateProvider,
+    translateModel: translateModel && translateModelFits(translateProvider, translateModel) ? translateModel : PROVIDER_MODEL_DEFAULTS.translate[translateProvider],
     translateTemperature: cleanFloat(input.translateTemperature, DEFAULTS.translateTemperature, 0, 1),
     translateReasoningEffort: cleanEnum(input.translateReasoningEffort, REASONING_EFFORTS, DEFAULTS.translateReasoningEffort),
     ttsModel: cleanModelId(input.ttsModel, DEFAULTS.ttsModel),

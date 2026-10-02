@@ -50,7 +50,7 @@ std::wstring providerKeysPath();
 Settings loadSettings();
 bool saveSettings(const Settings& s);
 
-// Keys de proveedor (groq = STT + traducción, elevenlabs = TTS) — objeto JSON plano.
+// Keys de proveedor (groq = STT + traducción, elevenlabs = TTS + STT, openai = traducción + STT) — objeto JSON plano.
 json::Value loadProviderKeys();
 bool saveProviderKeys(const json::Value& keys);
 

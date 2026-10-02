@@ -23,6 +23,8 @@ struct AudioPresentation {
   double target(double now, double nominalDelay) const {
     return active(now) ? sourceMs + (now - wallMs) * rate : now - nominalDelay;
   }
+  // Inverso de target() mientras está activo: instante (reloj de pared) en que el objetivo alcanza `source`.
+  double wallTimeFor(double source) const { return wallMs + (source - sourceMs) / rate; }
   void reset() { expiresMs = 0; }
 };
 }

@@ -1,6 +1,7 @@
 #include "media_stream.h"
 
 #include <ks.h>
+#include <algorithm>
 #include <ksmedia.h>
 
 #include "media_source.h"
@@ -16,7 +17,9 @@ struct Resolution {
   uint32_t width;
   uint32_t height;
 };
-constexpr Resolution kResolutions[] = {{1280, 720}, {1920, 1080}};
+// Solo 1280x720: es el lienzo del shell. Anunciar 1920x1080 hacía que algunas apps lo eligieran y la DLL
+// ampliaba 720p a 1080p (más blando y 2,25x más píxeles que codificar); a 720p la app escala si quiere.
+constexpr Resolution kResolutions[] = {{1280, 720}};
 const GUID kSubtypes[] = {MFVideoFormat_NV12, MFVideoFormat_RGB32};
 constexpr uint32_t kFrameRateNumerator = 30;
 constexpr uint32_t kFrameRateDenominator = 1;
@@ -70,6 +73,8 @@ HRESULT MediaStream::RuntimeClassInitialize(MediaSource* parent, DWORD streamId)
 
   stopEvent_ = CreateEventW(nullptr, TRUE, FALSE, nullptr);
   if (!stopEvent_) return HRESULT_FROM_WIN32(GetLastError());
+  tokenEvent_ = CreateEventW(nullptr, FALSE, FALSE, nullptr);
+  if (!tokenEvent_) return HRESULT_FROM_WIN32(GetLastError());
 
   return applyMediaType(rawTypes[0]);
 }
@@ -189,10 +194,12 @@ IFACEMETHODIMP MediaStream::RequestSample(IUnknown* token) {
   HRESULT hr = checkShutdown();
   if (FAILED(hr)) return hr;
   if (state_ != MF_STREAM_STATE_RUNNING) return MF_E_INVALIDREQUEST;
-  // Se encola la petición; el hilo cadenciado la satisface en el siguiente tick. Se acotan las
-  // peticiones pendientes para no acumular latencia si el consumidor pide más rápido que 30 fps.
+  // Se encola la petición; el hilo productor la satisface con el siguiente frame (o al vencer el
+  // periodo). Se acotan las peticiones pendientes para no acumular latencia si el consumidor pide más
+  // rápido que 30 fps.
   if (pendingTokens_.size() >= 4) pendingTokens_.pop_front();
   pendingTokens_.emplace_back(token);
+  SetEvent(tokenEvent_);
   return S_OK;
 }
 
@@ -331,6 +338,10 @@ HRESULT MediaStream::Shutdown() {
     CloseHandle(stopEvent_);
     stopEvent_ = nullptr;
   }
+  if (tokenEvent_) {
+    CloseHandle(tokenEvent_);
+    tokenEvent_ = nullptr;
+  }
   parent_ = nullptr;
   return S_OK;
 }
@@ -338,43 +349,78 @@ HRESULT MediaStream::Shutdown() {
 // ---- Hilo de producción -----------------------------------------------------------------------
 
 void MediaStream::workerLoop() {
-  // Timer de alta resolución (Windows 10 1803+); si no está disponible se degrada al timer normal.
+  // Entrega guiada por el productor: cada frame publicado en la memoria compartida avisa con el evento
+  // "frame listo" y la muestra sale en ese momento. Antes un timer propio a 30 fps leía «el último
+  // frame» con una fase arbitraria respecto a la webcam: cuando ambas fases coincidían, el jitter de unos
+  // ms alternaba frames repetidos y saltados (vídeo a tirones) y se sumaba hasta un frame de latencia.
+  // El timer (alta resolución, Windows 10 1803+) queda de respaldo: imagen de espera a 30 fps sin
+  // productor, repetición del último frame si el productor se retrasa, o todo si no hay evento.
   HANDLE timer = CreateWaitableTimerExW(nullptr, nullptr, CREATE_WAITABLE_TIMER_HIGH_RESOLUTION, TIMER_ALL_ACCESS);
   if (!timer) timer = CreateWaitableTimerExW(nullptr, nullptr, 0, TIMER_ALL_ACCESS);
+  HANDLE frameEvent = frameSource_.frameReadyEvent();  // nullptr si no se pudo abrir: solo timer
 
-  int64_t nextTick = MFGetSystemTime();
-  HANDLE waitHandles[2] = {stopEvent_, timer};
+  const int64_t period = frameDuration100ns_;
+  int64_t lastDelivery = 0;  // MFGetSystemTime() de la última muestra entregada (0 = ninguna aún)
+  bool fresh = false;        // el productor avisó de un frame que aún no salió
 
   for (;;) {
-    const int64_t now = MFGetSystemTime();
-    nextTick += frameDuration100ns_;
-    if (nextTick < now) nextTick = now;  // el hilo se retrasó: re-sincroniza en vez de ráfaga
-    const int64_t due = nextTick - now;
-    DWORD waitResult;
-    if (timer) {
-      LARGE_INTEGER dueTime;
-      dueTime.QuadPart = -due;  // relativo
-      SetWaitableTimer(timer, &dueTime, 0, nullptr, nullptr, FALSE);
-      waitResult = WaitForMultipleObjects(2, waitHandles, FALSE, INFINITE);
-    } else {
-      waitResult = WaitForSingleObject(stopEvent_, DWORD(due / 10'000));
-    }
-    if (waitResult == WAIT_OBJECT_0) break;  // stop
-
-    ComPtr<IUnknown> token;
-    bool haveRequest = false;
+    bool haveToken = false;
     {
       std::lock_guard<std::mutex> lock(mutex_);
       if (shutdown_ || state_ != MF_STREAM_STATE_RUNNING) break;
-      if (!pendingTokens_.empty()) {
-        token = pendingTokens_.front();
-        pendingTokens_.pop_front();
-        haveRequest = true;
+      haveToken = !pendingTokens_.empty();
+    }
+    // Frame nuevo: sale en cuanto pasó medio periodo desde la anterior (sin ráfagas). Sin frame nuevo:
+    // a 1 periodo sin productor (animación de espera) o a 1,5 con productor (su siguiente frame llega
+    // antes; si no, se repite el último en vez de quedarse sin muestra).
+    const int64_t gap = fresh ? period / 2 : (frameSource_.producerLive() ? period + period / 2 : period);
+    const int64_t due = lastDelivery == 0 ? 0 : lastDelivery + gap - MFGetSystemTime();
+    if (haveToken && due <= 0) {
+      ComPtr<IUnknown> token;
+      {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (!pendingTokens_.empty()) {
+          token = pendingTokens_.front();
+          pendingTokens_.pop_front();
+        }
+      }
+      if (token) {
+        // Cadencia de inicio a inicio: medirla tras deliverSample sumaba lo que tarda llenar la muestra
+        // (imagen de espera a ~26 fps en vez de 30).
+        lastDelivery = MFGetSystemTime();
+        deliverSample(token.Get());
+        fresh = false;
+      }
+      continue;
+    }
+
+    HANDLE handles[4];
+    DWORD count = 0;
+    handles[count++] = stopEvent_;
+    handles[count++] = tokenEvent_;
+    const DWORD frameIndex = count;
+    if (frameEvent) handles[count++] = frameEvent;
+    DWORD timeoutMs = INFINITE;
+    if (haveToken) {  // hay petición pendiente: despertar cuando toque entregar
+      if (timer) {
+        LARGE_INTEGER dueTime;
+        dueTime.QuadPart = -std::max<int64_t>(due, 1);  // relativo, 100 ns
+        SetWaitableTimer(timer, &dueTime, 0, nullptr, nullptr, FALSE);
+        handles[count++] = timer;
+      } else {
+        timeoutMs = DWORD(std::max<int64_t>(1, due / 10'000));
       }
     }
-    if (haveRequest) deliverSample(token.Get());
+    const DWORD result = WaitForMultipleObjects(count, handles, FALSE, timeoutMs);
+    if (result == WAIT_OBJECT_0) break;  // stop
+    if (result == WAIT_FAILED) Sleep(5);  // no debería ocurrir; sin esto el bucle giraría en vacío
+    else if (frameEvent && result == WAIT_OBJECT_0 + frameIndex) fresh = true;
+    // Petición nueva, timer o timeout: se reevalúa arriba.
   }
-  if (timer) CloseHandle(timer);
+  if (timer) {
+    CancelWaitableTimer(timer);
+    CloseHandle(timer);
+  }
 }
 
 HRESULT MediaStream::fillSample(IMFSample* sample) {

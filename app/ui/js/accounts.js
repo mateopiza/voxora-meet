@@ -1,6 +1,8 @@
-// Cuentas de proveedores (API keys de Groq y ElevenLabs): hoja «Conecta tus cuentas» (en ambos modos) y
-// tarjeta «Cuentas» de Avanzado › Ajustes. Las keys se envían al motor, que las cifra con DPAPI y nunca
-// las devuelve (la UI solo ve booleanos). Si falta alguna, un aviso bajo la barra superior abre la hoja.
+// Cuentas de proveedores (API keys de Groq, ElevenLabs y OpenAI): hoja «Conecta tus cuentas» (en ambos
+// modos) y tarjeta «Cuentas» de Avanzado › Ajustes. Las keys se envían al motor, que las cifra con DPAPI y
+// nunca las devuelve (la UI solo ve booleanos). Las tres se piden por igual (aviso bajo la barra superior
+// y hoja de cuentas); para iniciar el doblaje solo bloquean las de los proveedores elegidos en Modelos
+// (transcripción y traducción) más ElevenLabs (voz).
 
 import { engine, native } from './bridge.js';
 import { $, $$, openSheet, setBusy, setIcon, toast, toastError } from './dom.js';
@@ -8,19 +10,32 @@ import { notify, state, subscribe } from './store.js';
 
 const PROVIDERS = [
   { id: 'groq', name: 'Groq', desc: 'Transcripción (Whisper) y traducción.', placeholder: 'gsk_…', url: 'https://console.groq.com/keys' },
-  { id: 'elevenlabs', name: 'ElevenLabs', desc: 'Tu voz clonada (síntesis y clonación).', placeholder: 'sk_…', url: 'https://elevenlabs.io/app/settings/api-keys' },
+  { id: 'elevenlabs', name: 'ElevenLabs', desc: 'Tu voz clonada (síntesis y clonación) y transcripción con Scribe.', placeholder: 'sk_…', url: 'https://elevenlabs.io/app/settings/api-keys' },
+  { id: 'openai', name: 'OpenAI', desc: 'Traducción con GPT y transcripción, si lo eliges en Modelos.', placeholder: 'sk-…', url: 'https://platform.openai.com/api-keys' },
 ];
 const LABELS = Object.fromEntries(PROVIDERS.map((p) => [p.id, p.name]));
 const blocks = [];  // { provider, block, input, clear, save }
 const els = {};
 
-export const missingKeys = () => PROVIDERS.filter((p) => !state.keys[p.id]).map((p) => p.name);
+/** Proveedores cuya key hace falta con los ajustes actuales: transcripción, traducción y ElevenLabs (voz). */
+export function requiredProviders() {
+  const s = state.settings || {};
+  const ids = new Set([s.sttProvider || 'groq', s.translateProvider || 'groq', 'elevenlabs']);
+  return PROVIDERS.filter((p) => ids.has(p.id));
+}
+
+export const missingKeys = () => requiredProviders().filter((p) => !state.keys[p.id]).map((p) => p.name);
+
+/** «A», «A y B», «A, B y C». */
+export const joinNames = (names) => (names.length > 1 ? `${names.slice(0, -1).join(', ')} y ${names.at(-1)}` : names[0] || '');
+
+const nextMissing = () => blocks.find((b) => b.host === 'sheet' && !state.keys[b.provider]);
 
 /** Abre la hoja de cuentas (con foco en la primera key que falte). */
 export function openAccounts() {
   const dialog = openSheet('sheet-accounts');
   if (!dialog) return;
-  const first = blocks.find((b) => b.host === 'sheet' && !state.keys[b.provider]) || blocks.find((b) => b.host === 'sheet');
+  const first = nextMissing() || blocks.find((b) => b.host === 'sheet');
   first?.input.focus();
 }
 
@@ -77,9 +92,9 @@ function buildBlock(provider, host) {
       input.type = 'password';
       setIcon(reveal, 'eye');
       toast({ kind: 'success', title: `Key de ${provider.name} guardada`, message: 'Se cifró en este equipo y no se volverá a mostrar.' });
-      // En la hoja: pasar a la siguiente key que falte, o cerrar si ya están las dos.
+      // En la hoja: pasar a la siguiente key que falte, o cerrar si ya están todas.
       if (host === 'sheet') {
-        const next = blocks.find((b) => b.host === 'sheet' && !state.keys[b.provider]);
+        const next = nextMissing();
         if (next) next.input.focus();
         else setTimeout(() => $('#sheet-accounts')?.close(), 600);
       }
@@ -129,12 +144,12 @@ function renderKeys() {
     b.save.disabled = state.engine.state !== 'ready';
   }
   // Aviso bajo la barra superior: solo con el motor listo (si no, no sabemos si faltan).
-  const missing = missingKeys();
+  const missing = PROVIDERS.filter((p) => !state.keys[p.id]).map((p) => p.name);
   const show = state.engine.state === 'ready' && missing.length > 0;
   els.banner.hidden = !show;
   if (show) {
-    els.bannerText.textContent = missing.length === 2
-      ? 'Falta la clave de Groq y la de ElevenLabs.'
+    els.bannerText.textContent = missing.length > 1
+      ? `Faltan las claves de ${joinNames(missing)}.`
       : `Falta la clave de ${missing[0]}.`;
   }
 }

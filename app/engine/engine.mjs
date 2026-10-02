@@ -28,7 +28,7 @@ import { createSettingsStore, normalizeSettings, PROVIDER_KEY_NAMES, MODEL_SETTI
 import { SyncBuffer } from '../../sync-buffer/src/sync-buffer.mjs';
 import { describeOutput, resolveOutputDevice, validateAudioRoutes } from './output-device.mjs';
 import { friendlyError } from './errors.mjs';
-import { ModelCatalog } from './models.mjs';
+import { ModelCatalog, PROVIDER_LABELS } from './models.mjs';
 
 // Voces: primero las del usuario, luego las de la biblioteca.
 const CATEGORY_ORDER = { cloned: 0, professional: 1, generated: 2, premade: 3 };
@@ -159,6 +159,72 @@ export async function createEngine({ input = process.stdin, output = process.std
     return { index, ...sharedStores };
   }
 
+  /** Key del proveedor elegido para una etapa; sin ella no se puede crear su cliente. */
+  function providerKey(keys, provider, stage) {
+    if (keys[provider]) return keys[provider];
+    throw new ProtocolError('missing_key', `Falta la API key de ${PROVIDER_LABELS[provider] ?? provider} (${stage}). Añádela en Ajustes o elige otro proveedor.`);
+  }
+
+  /** Cliente de STT del proveedor elegido (`sttProvider`): Groq Whisper, ElevenLabs Scribe u OpenAI. */
+  function buildStt(index, settings, keys, vocabulary) {
+    const provider = settings.sttProvider;
+    const options = {
+      apiKey: providerKey(keys, provider, 'transcripción'),
+      model: settings.sttModel,
+      temperature: settings.sttTemperature,
+      language: settings.sourceLanguage,
+      vocabulary,
+      userId: USER_ID,
+    };
+    return provider === 'elevenlabs' ? new index.ElevenLabsScribeStt(options) : new index.GroqWhisperStt({ ...options, provider });
+  }
+
+  /** Traductor del proveedor elegido (`translateProvider`): Groq u OpenAI. */
+  function buildTranslator(index, settings, keys, glossary) {
+    const provider = settings.translateProvider;
+    return new index.ContextTranslator({
+      provider,
+      apiKey: providerKey(keys, provider, 'traducción'),
+      model: settings.translateModel,
+      temperature: settings.translateTemperature,
+      reasoningEffort: settings.translateReasoningEffort,
+      memoryTurns: settings.memoryTurns,
+      glossary,
+      userId: USER_ID,
+      sourceLanguage: settings.sourceLanguage,
+      targetLanguage: settings.targetLanguage,
+      tone: settings.tone,
+      styleInstruction: settings.styleInstruction || '',
+    });
+  }
+
+  /**
+   * Cambio de proveedor con la sesión en curso: se sustituye el cliente de esa
+   * etapa (rige desde el siguiente turno). Si no se puede (falta la key), la
+   * etapa sigue con el proveedor anterior y su modelo no se toca: `live` es el
+   * parche que irá a `applyLiveSettings`.
+   */
+  async function swapLiveProviders(settings, live) {
+    const pipeline = controller.session?.pipeline;
+    if (typeof pipeline?.replaceStages !== 'function' || typeof pipeline.currentSettings !== 'function') return;
+    const current = pipeline.currentSettings();
+    const sttChanged = Boolean(current.sttProvider) && current.sttProvider !== settings.sttProvider;
+    const translateChanged = Boolean(current.translateProvider) && current.translateProvider !== settings.translateProvider;
+    if (!sttChanged && !translateChanged) return;
+    const { index, vocabulary, glossary } = await pipelineStores();
+    const keys = await store.getProviderKeys();
+    const swap = (stage, modelKey, build) => {
+      try {
+        pipeline.replaceStages({ [stage]: build() });
+      } catch (error) {
+        delete live[modelKey];
+        controller.emit('warn', { kind: 'provider', message: `${friendlyError(error).message} El doblaje en curso sigue con el proveedor anterior.` });
+      }
+    };
+    if (sttChanged) swap('stt', 'sttModel', () => buildStt(index, settings, keys, vocabulary));
+    if (translateChanged) swap('translator', 'translateModel', () => buildTranslator(index, settings, keys, glossary));
+  }
+
   const controller = new SessionController({
     settingsStore: store,
     createMicCapture: ({ deviceId, source }) => {
@@ -195,33 +261,13 @@ export async function createEngine({ input = process.stdin, output = process.std
     },
     createPipeline: async ({ settings: rawSettings, keys }) => {
       const { index: module, vocabulary, glossary, profiles } = await pipelineStores();
-      if (!keys.groq) throw new ProtocolError('missing_key', 'falta la API key de Groq (STT + traducción)');
-      if (!keys.elevenlabs) throw new ProtocolError('missing_key', 'falta la API key de ElevenLabs (TTS)');
       // Los overrides de session.start llegan sin normalizar: mismos rangos que settings.set.
       const settings = normalizeSettings(rawSettings);
       const userId = USER_ID;
+      const stt = buildStt(module, settings, keys, vocabulary);
+      const translator = buildTranslator(module, settings, keys, glossary);
+      if (!keys.elevenlabs) throw new ProtocolError('missing_key', 'Falta la API key de ElevenLabs (voz). Añádela en Ajustes.');
       const { ttsCapabilities, ttsCostMultiplier } = models.capabilitiesFor(settings);
-      const stt = new module.GroqWhisperStt({
-        apiKey: keys.groq,
-        model: settings.sttModel,
-        temperature: settings.sttTemperature,
-        language: settings.sourceLanguage,
-        vocabulary,
-        userId,
-      });
-      const translator = new module.ContextTranslator({
-        apiKey: keys.groq,
-        model: settings.translateModel,
-        temperature: settings.translateTemperature,
-        reasoningEffort: settings.translateReasoningEffort,
-        memoryTurns: settings.memoryTurns,
-        glossary,
-        userId,
-        sourceLanguage: settings.sourceLanguage,
-        targetLanguage: settings.targetLanguage,
-        tone: settings.tone,
-        styleInstruction: settings.styleInstruction || '',
-      });
       const tts = new module.ElevenLabsTts({
         apiKey: keys.elevenlabs,
         modelId: settings.ttsModel,
@@ -292,7 +338,9 @@ export async function createEngine({ input = process.stdin, output = process.std
         await store.setProviderKeys(clean);
       }
       // Modelos/parámetros en caliente: rigen desde el siguiente turno de la sesión en curso.
-      controller.applyLiveSettings({ ...settings, ...models.capabilitiesFor(settings) });
+      const live = { ...settings, ...models.capabilitiesFor(settings) };
+      await swapLiveProviders(settings, live);
+      controller.applyLiveSettings(live);
       return { settings, providerKeys: await store.providerKeyStatus() };
     },
 

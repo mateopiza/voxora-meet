@@ -26,6 +26,33 @@ const MOCK_TRANSLATE = [
   chat('qwen/qwen3.8-27b', 'Qwen3.8 27B', 'Qwen de última generación, multilingüe; más caro. El razonamiento se oculta para que no llegue a la voz.', 0.8, 4, { supportsReasoningEffort: true, reasoningEfforts: ['none', 'default'] }),
   chat('llama-3.3-70b-versatile', 'Llama 3.3 70B', 'Traducción fluida sin razonamiento y latencia estable.', 0.59, 0.79),
 ];
+// Proveedores alternativos por etapa: ElevenLabs Scribe / OpenAI para transcribir, OpenAI para traducir.
+const sttModel = (id, label, description, usd, recommended = false) => ({ id, label, description, recommended, supportsReasoningEffort: false, reasoningEfforts: [], price: { unit: 'hora de audio', usd }, available: true });
+const MOCK_STT_BY_PROVIDER = {
+  groq: MOCK_STT,
+  elevenlabs: [
+    sttModel('scribe_v2', 'Scribe v2', 'El transcriptor más preciso de ElevenLabs (90+ idiomas); usa tu vocabulario como términos clave. Recomendado.', 0.4, true),
+    sttModel('scribe_v1', 'Scribe v1', 'Generación anterior de Scribe; no admite términos clave del vocabulario.', 0.4),
+  ],
+  openai: [
+    sttModel('gpt-4o-transcribe', 'GPT-4o Transcribe', 'La transcripción más precisa de OpenAI. Recomendado.', 0.36, true),
+    sttModel('gpt-4o-mini-transcribe', 'GPT-4o mini Transcribe', 'Más rápido y a mitad de precio; algo menos preciso.', 0.18),
+  ],
+};
+const MOCK_TRANSLATE_BY_PROVIDER = {
+  groq: MOCK_TRANSLATE,
+  openai: [
+    chat('gpt-4.1', 'GPT-4.1', 'Traducción de alta calidad con latencia baja y sin razonamiento. Recomendado.', 2, 8, { recommended: true, contextWindow: undefined }),
+    chat('gpt-4.1-mini', 'GPT-4.1 mini', 'Rápido y económico; buena calidad en frases directas.', 0.4, 1.6, { contextWindow: undefined }),
+    chat('gpt-4o', 'GPT-4o', 'Muy buena calidad multilingüe; algo más caro que GPT-4.1.', 2.5, 10, { contextWindow: undefined }),
+    chat('gpt-5', 'GPT-5', 'Máxima calidad, pero razona antes de traducir: bastante más latencia.', 1.25, 10, { contextWindow: undefined, supportsReasoningEffort: true, reasoningEfforts: ['low', 'medium', 'high'] }),
+  ],
+};
+const MOCK_PROVIDERS = {
+  stt: ['groq', 'elevenlabs', 'openai'], translate: ['groq', 'openai'],
+  labels: { groq: 'Groq', elevenlabs: 'ElevenLabs', openai: 'OpenAI' },
+  defaults: { stt: { groq: 'whisper-large-v3', elevenlabs: 'scribe_v2', openai: 'gpt-4o-transcribe' }, translate: { groq: 'openai/gpt-oss-120b', openai: 'gpt-4.1' } },
+};
 const tts = (id, label, description, languages, costMultiplier, caps = {}) => ({
   id, label, description, recommended: false, supportsReasoningEffort: false, reasoningEfforts: [],
   price: { unit: '1k caracteres', usd: Math.round(0.18 * costMultiplier * 1e4) / 1e4 }, languages, costMultiplier,
@@ -40,6 +67,7 @@ const MOCK_TTS = [
   tts('eleven_flash_v2_5', 'Flash v2.5', 'Latencia mínima y mitad de costo en 32 idiomas; la menos fiel al timbre clonado.', 32, 0.5, { supportsLanguageCode: true, supportsNormalizationOn: false, maxChars: 40000 }),
 ];
 const MODEL_DEFAULTS = {
+  sttProvider: 'groq', translateProvider: 'groq',
   sttModel: 'whisper-large-v3', sttTemperature: 0, translateModel: 'openai/gpt-oss-120b', translateTemperature: 0.2,
   translateReasoningEffort: 'low', memoryTurns: 8, ttsModel: 'eleven_multilingual_v2', ttsStability: 0.5,
   ttsSimilarityBoost: 0.75, ttsStyle: 0, ttsSpeed: 1, ttsSpeakerBoost: true, ttsTextNormalization: 'auto',
@@ -47,15 +75,15 @@ const MODEL_DEFAULTS = {
 
 /** Igual que estimateCostRates de billing/src (supuestos de reunión, margen 1,5, 100 VOX/USD). */
 function estimateRates(s, minutes = 60, speakingRatio = 0.5) {
-  const STT = { 'whisper-large-v3': 0.111, 'whisper-large-v3-turbo': 0.04 };
-  const CHAT = Object.fromEntries(MOCK_TRANSLATE.map((m) => [m.id, [m.price.usd, m.price.usdOutput]]));
+  const STT = Object.fromEntries(Object.values(MOCK_STT_BY_PROVIDER).flat().map((m) => [m.id, m.price.usd]));
+  const CHAT = Object.fromEntries(Object.values(MOCK_TRANSLATE_BY_PROVIDER).flat().map((m) => [m.id, [m.price.usd, m.price.usdOutput]]));
   const MULT = Object.fromEntries(MOCK_TTS.map((m) => [m.id, m.costMultiplier]));
   const speakingMin = minutes * speakingRatio;
   const words = speakingMin * 140;
   const turns = Math.ceil((speakingMin * 60000) / 8000);
   const tokensPerTurn = (8000 / 60000) * 140 * 1.4;
   const effort = s.translateReasoningEffort;
-  const reasoning = /gpt-oss/.test(s.translateModel) ? ({ low: 80, medium: 300, high: 1000 }[effort] ?? 80)
+  const reasoning = /gpt-oss|^gpt-5/.test(s.translateModel) ? ({ low: 80, medium: 300, high: 1000 }[effort] ?? 80)
     : /qwen/.test(s.translateModel) && effort === 'default' ? 300 : 0;
   const inTok = words * 1.4 + turns * (300 + Number(s.memoryTurns) * 2 * tokensPerTurn);
   const outTok = words * 1.4 + turns * reasoning;
@@ -123,7 +151,7 @@ export function createMock(dispatch) {
     { term: 'OKR', translation: null },
   ];
   let vocabulary = ['VOXORA', 'Mateo', 'Bogotá', 'Kubernetes', 'Grafana'];
-  const keys = { groq: scenario !== 'fresh', elevenlabs: scenario !== 'fresh' };
+  const keys = { groq: scenario !== 'fresh', elevenlabs: scenario !== 'fresh', openai: false };
   const voices = [
     { voiceId: 'Xb7hH8MSUJpSbSDYk0k2', name: 'Mateo - Sagitario', category: 'professional', previewUrl: '' },
     { voiceId: 'pNInz6obpgDQGcFmaJgB', name: 'Mateo reuniones (IVC)', category: 'cloned', previewUrl: '' },
@@ -332,12 +360,19 @@ export function createMock(dispatch) {
           : offline ? { groq: { code: 'network', message: 'Sin conexión con Groq.' } } : {};
         // Como ensureSelected del motor: el modelo guardado que ya no existe llega con available:false.
         const withSelected = (list, id, make) => (list.some((m) => m.id === id) ? list : [...list, { ...make(id), available: false }]);
+        const sttProvider = settings.sttProvider || 'groq';
+        const trProvider = settings.translateProvider || 'groq';
+        const sttByProvider = { ...MOCK_STT_BY_PROVIDER };
+        const translateByProvider = { ...MOCK_TRANSLATE_BY_PROVIDER };
+        sttByProvider[sttProvider] = withSelected(sttByProvider[sttProvider], settings.sttModel, (id) => ({ ...MOCK_STT[0], id, label: id, recommended: false }));
+        translateByProvider[trProvider] = withSelected(translateByProvider[trProvider], settings.translateModel, (id) => chat(id, id, 'Modelo de chat sin ficha propia.', 1, 4));
         return {
-          stt: withSelected(MOCK_STT, settings.sttModel, (id) => ({ ...MOCK_STT[0], id, label: id, recommended: false })),
-          translate: withSelected(MOCK_TRANSLATE, settings.translateModel, (id) => chat(id, id, 'Modelo de chat de Groq sin ficha propia.', 1, 4)),
+          stt: sttByProvider[sttProvider],
+          translate: translateByProvider[trProvider],
+          sttByProvider, translateByProvider, providers: MOCK_PROVIDERS,
           tts: withSelected(MOCK_TTS, settings.ttsModel, (id) => tts(id, id, 'Modelo de ElevenLabs sin ficha propia.', null, 1)),
           defaults: { ...MODEL_DEFAULTS }, offline,
-          fetchedAt: new Date().toISOString(), sources: { groq: offline ? 'static' : 'live', elevenlabs: scenario === 'fresh' ? 'static' : 'live' }, errors,
+          fetchedAt: new Date().toISOString(), sources: { groq: offline ? 'static' : 'live', elevenlabs: scenario === 'fresh' ? 'static' : 'live', openai: keys.openai ? 'live' : 'static' }, errors,
         };
       },
       'cost.estimate': (p) => {

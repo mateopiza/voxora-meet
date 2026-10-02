@@ -1,6 +1,7 @@
 // IMFMediaStream2 de la cámara virtual: un único stream de vídeo (PINNAME_VIDEO_CAPTURE) que anuncia
-// NV12 y RGB32 a 1280x720 y 1920x1080 @ 30 fps y produce muestras desde FrameSource en un hilo propio
-// cadenciado con un waitable timer de alta resolución.
+// NV12 y RGB32 a 1280x720 @ 30 fps y produce muestras desde FrameSource en un hilo propio: cada frame
+// sale cuando el productor lo publica (evento "frame listo"), con un waitable timer de alta resolución
+// de respaldo (imagen de espera, productor retrasado).
 #pragma once
 
 #ifndef WIN32_LEAN_AND_MEAN
@@ -89,6 +90,7 @@ class MediaStream
   std::deque<Microsoft::WRL::ComPtr<IUnknown>> pendingTokens_;
   std::thread worker_;
   HANDLE stopEvent_ = nullptr;
+  HANDLE tokenEvent_ = nullptr;  // auto-reset: RequestSample despierta al hilo productor
 };
 
 }  // namespace voxora::vcam

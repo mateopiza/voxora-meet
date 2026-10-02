@@ -9,19 +9,32 @@
 //   - Control de tono (formal | professional | neutral) e instrucción de estilo
 //     libre del usuario.
 //   - Reintentos con backoff en 429/5xx, timeout y cancelación por AbortSignal.
+//
+// Con `provider: "openai"` el mismo cliente habla con OpenAI Chat Completions
+// (`gpt-4.1` por defecto, configurable con VOXORA_MEET_OPENAI_MODEL).
 
 import { fetchWithRetry, HttpError, isAbortError, parseRetryAfter, safeText, truncate } from "../util/http.mjs";
 import { languageName, normalizeLanguage } from "../languages.mjs";
 
 export const GROQ_BASE_URL = "https://api.groq.com/openai/v1";
+export const OPENAI_BASE_URL = "https://api.openai.com/v1";
 export const DEFAULT_TRANSLATE_MODEL = "openai/gpt-oss-120b";
+export const DEFAULT_OPENAI_TRANSLATE_MODEL = "gpt-4.1";
+
+/** Proveedores de chat completions que atiende este cliente. */
+const CHAT_PROVIDERS = Object.freeze({
+  groq: { label: "Groq Chat", baseUrl: GROQ_BASE_URL, envKey: "GROQ_API_KEY", model: () => process.env.VOXORA_MEET_GROQ_MODEL || DEFAULT_TRANSLATE_MODEL },
+  openai: { label: "OpenAI Chat", baseUrl: OPENAI_BASE_URL, envKey: "OPENAI_API_KEY", model: () => process.env.VOXORA_MEET_OPENAI_MODEL || DEFAULT_OPENAI_TRANSLATE_MODEL },
+});
 
 /** Valores de esfuerzo de razonamiento que acepta el ajuste `translateReasoningEffort`. */
 export const REASONING_EFFORTS = Object.freeze(["low", "medium", "high", "none", "default"]);
 
 /**
- * Cómo razona cada familia de modelos de chat de Groq:
+ * Cómo razona cada familia de modelos de chat:
  *   - gpt-oss (openai/gpt-oss-*): `reasoning_effort` low | medium | high.
+ *   - OpenAI con razonamiento (gpt-5*, o1/o3/o4): `reasoning_effort` low | medium | high
+ *     y no admiten `temperature` (se omite).
  *   - Qwen3 (qwen/qwen3-*): `reasoning_effort` none | default; con `default` el
  *     razonamiento se oculta (`reasoning_format: hidden`) para que no llegue al TTS.
  *   - Resto: no admite razonamiento configurable (no se manda nada).
@@ -31,18 +44,19 @@ export function chatReasoningProfile(model) {
   const id = String(model ?? "").toLowerCase();
   if (/gpt-oss/.test(id)) return { family: "gpt-oss", efforts: ["low", "medium", "high"] };
   if (/qwen-?3/.test(id)) return { family: "qwen3", efforts: ["none", "default"] };
+  if (/^(gpt-5|o[134])/.test(id)) return { family: "openai-reasoning", efforts: ["low", "medium", "high"] };
   return { family: null, efforts: [] };
 }
 
 /**
  * Parámetros de razonamiento para el body de chat completions según el modelo
- * y el esfuerzo pedido. Traduce entre escalas: en gpt-oss `none` → low y
+ * y el esfuerzo pedido. Traduce entre escalas: en gpt-oss y OpenAI `none` → low y
  * `default` → medium; en Qwen3 `low` → none y `medium`/`high` → default.
  */
 export function reasoningParamsFor(model, effort = "low") {
   const { family } = chatReasoningProfile(model);
   const level = String(effort ?? "low").toLowerCase();
-  if (family === "gpt-oss") {
+  if (family === "gpt-oss" || family === "openai-reasoning") {
     const mapped = level === "none" ? "low" : level === "default" ? "medium" : level;
     return { reasoning_effort: ["low", "medium", "high"].includes(mapped) ? mapped : "low" };
   }
@@ -68,9 +82,15 @@ export function clampTranslateTemperature(value, fallback = 0.2) {
   return Number.isFinite(n) ? Math.min(1, Math.max(0, n)) : fallback;
 }
 
-/** ¿El 400 de Groq se queja de los parámetros de razonamiento? */
+/** ¿El 400 del proveedor se queja de los parámetros de razonamiento? */
 function rejectsReasoningParams(status, body) {
   return (status === 400 || status === 422) && /reasoning_(effort|format)|reasoning is not supported|does not support reasoning/i.test(String(body ?? ""));
+}
+
+/** ¿El 400 se queja de `temperature`? (modelos de OpenAI que solo admiten la de por defecto) */
+function rejectsTemperature(status, body) {
+  const text = String(body ?? "");
+  return (status === 400 || status === 422) && /temperature/i.test(text) && /unsupported|not support|only the default/i.test(text);
 }
 
 export const TONES = Object.freeze({
@@ -80,12 +100,13 @@ export const TONES = Object.freeze({
 });
 
 export class TranslationError extends Error {
-  constructor(message, { cause, status, model } = {}) {
+  constructor(message, { cause, status, model, provider } = {}) {
     super(message, { cause });
     this.name = "TranslationError";
     this.status = status;
     this.stage = "translate";
     if (model) this.model = model;
+    if (provider) this.provider = provider;
   }
 }
 
@@ -138,10 +159,13 @@ export class ContextTranslator {
   #memory = [];
   /** Modelos que rechazaron los parámetros de razonamiento: no se vuelven a mandar. */
   #noReasoning = new Set();
+  /** Modelos que rechazaron `temperature`: se omite desde entonces. */
+  #noTemperature = new Set();
 
   constructor({
-    apiKey = process.env.GROQ_API_KEY,
-    model = process.env.VOXORA_MEET_GROQ_MODEL || DEFAULT_TRANSLATE_MODEL,
+    provider = "groq",
+    apiKey = process.env[(CHAT_PROVIDERS[provider] ?? CHAT_PROVIDERS.groq).envKey],
+    model = (CHAT_PROVIDERS[provider] ?? CHAT_PROVIDERS.groq).model(),
     temperature = 0.2,
     memoryTurns = 8,
     glossary = null,
@@ -150,7 +174,7 @@ export class ContextTranslator {
     targetLanguage = "en",
     tone = "professional",
     styleInstruction = "",
-    baseUrl = GROQ_BASE_URL,
+    baseUrl = (CHAT_PROVIDERS[provider] ?? CHAT_PROVIDERS.groq).baseUrl,
     timeoutMs = 20_000,
     retries = 2,
     sleep,
@@ -158,10 +182,13 @@ export class ContextTranslator {
     reasoningEffort = "low",
     logger = null,
   } = {}) {
-    if (!apiKey) throw new TypeError("ContextTranslator: falta `apiKey` (GROQ_API_KEY)");
+    const info = CHAT_PROVIDERS[provider] ?? CHAT_PROVIDERS.groq;
+    if (!apiKey) throw new TypeError(`ContextTranslator: falta \`apiKey\` (${info.envKey})`);
     this.#apiKey = apiKey;
     this.#fetch = fetchImpl;
-    this.model = String(model || DEFAULT_TRANSLATE_MODEL);
+    this.provider = CHAT_PROVIDERS[provider] ? provider : "groq";
+    this.providerLabel = info.label;
+    this.model = String(model || info.model());
     this.temperature = clampTranslateTemperature(temperature);
     this.memoryTurns = Math.max(0, Number(memoryTurns) || 0);
     this.glossary = glossary;
@@ -213,7 +240,7 @@ export class ContextTranslator {
     return this.temperature;
   }
 
-  /** `low|medium|high` (gpt-oss) o `none|default` (Qwen3); se traduce por familia al enviar. */
+  /** `low|medium|high` (gpt-oss, OpenAI) o `none|default` (Qwen3); se traduce por familia al enviar. */
   setReasoningEffort(effort) {
     const level = String(effort ?? "").toLowerCase();
     if (REASONING_EFFORTS.includes(level)) this.reasoningEffort = level;
@@ -278,29 +305,35 @@ export class ContextTranslator {
       stream: false,
       ...reasoning,
     };
+    // Los modelos de OpenAI que razonan solo admiten la temperatura por defecto.
+    if (chatReasoningProfile(model).family === "openai-reasoning" || this.#noTemperature.has(model)) delete body.temperature;
 
     const url = `${this.baseUrl}/chat/completions`;
     let res = await this.#post(url, body, signal, model);
-    if (!res.ok && Object.keys(reasoning).length) {
-      // Un modelo que no admite los parámetros de razonamiento responde 400: se
-      // recuerda y se reintenta una vez sin ellos (sin romper el turno).
+    // Un modelo que no admite los parámetros de razonamiento o la temperatura
+    // responde 400: se recuerda y se reintenta sin ellos (sin romper el turno).
+    for (let attempt = 0; !res.ok && attempt < 2; attempt += 1) {
       const errorBody = await safeText(res);
-      if (rejectsReasoningParams(res.status, errorBody)) {
+      if ("reasoning_effort" in body && rejectsReasoningParams(res.status, errorBody)) {
         this.#noReasoning.add(model);
         this.logger?.debug?.("translate.reasoning_unsupported", { model });
         for (const key of Object.keys(reasoning)) delete body[key];
         body.max_completion_tokens = maxCompletionTokens(source, null);
-        res = await this.#post(url, body, signal, model);
+      } else if ("temperature" in body && rejectsTemperature(res.status, errorBody)) {
+        this.#noTemperature.add(model);
+        this.logger?.debug?.("translate.temperature_unsupported", { model });
+        delete body.temperature;
       } else {
         this.#throwHttp(res, errorBody, url, model);
       }
+      res = await this.#post(url, body, signal, model);
     }
     if (!res.ok) this.#throwHttp(res, await safeText(res), url, model);
     let data;
     try {
       data = await res.json();
     } catch (error) {
-      throw new TranslationError("Groq Chat devolvió una respuesta no JSON", { cause: error, model });
+      throw new TranslationError(`${this.providerLabel} devolvió una respuesta no JSON`, { cause: error, model, provider: this.provider });
     }
     const translation = cleanTranslation(data?.choices?.[0]?.message?.content);
     const usage = {
@@ -324,18 +357,18 @@ export class ContextTranslator {
           headers: { Authorization: `Bearer ${this.#apiKey}`, "Content-Type": "application/json" },
           body: JSON.stringify(body),
         },
-        { retries: this.retries, timeoutMs: this.timeoutMs, signal, sleep: this.sleep, provider: "Groq Chat", fetch: this.#fetch },
+        { retries: this.retries, timeoutMs: this.timeoutMs, signal, sleep: this.sleep, provider: this.providerLabel, fetch: this.#fetch },
       );
     } catch (error) {
       if (isAbortError(error) || signal?.aborted) throw error;
-      throw new TranslationError(`Groq Chat: ${error.message}`, { cause: error, status: error.status, model });
+      throw new TranslationError(`${this.providerLabel}: ${error.message}`, { cause: error, status: error.status, model, provider: this.provider });
     }
   }
 
   #throwHttp(res, body, url, model) {
-    const cause = new HttpError(`Groq Chat ${res.status}: ${truncate(body)}`, {
-      status: res.status, body, url: String(url), provider: "Groq Chat", retryAfterMs: parseRetryAfter(res.headers),
+    const cause = new HttpError(`${this.providerLabel} ${res.status}: ${truncate(body)}`, {
+      status: res.status, body, url: String(url), provider: this.providerLabel, retryAfterMs: parseRetryAfter(res.headers),
     });
-    throw new TranslationError(cause.message, { cause, status: res.status, model });
+    throw new TranslationError(cause.message, { cause, status: res.status, model, provider: this.provider });
   }
 }

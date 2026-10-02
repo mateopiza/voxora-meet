@@ -2,6 +2,7 @@
 
 #include <cstring>
 
+#include "../common/nv12.h"
 #include "pixel_convert.h"
 
 namespace voxora::vcam {
@@ -21,13 +22,15 @@ void FrameSource::close() {
 }
 
 void FrameSource::configure(uint32_t width, uint32_t height, OutputFormat format) {
-  if (width == width_ && height == height_ && format == format_ && !scaledRgba_.empty()) return;
+  if (width == width_ && height == height_ && format == format_ && !frameRgba_.empty()) return;
   width_ = width;
   height_ = height;
   format_ = format;
-  scaledRgba_.assign(size_t(width) * height * 4, 0);
-  nv12Cache_.assign(nv12Size(width, height), 0);
-  nv12CacheValid_ = false;
+  frameRgba_.assign(size_t(width) * height * 4, 0);
+  frameNv12_.assign(nv12Size(width, height), 0);
+  fallbackNv12_.assign(nv12Size(width, height), 0);
+  frameIsNv12_ = false;
+  nv12Valid_ = false;
   lastProducerSeq_ = 0;
   fallback_.prepare(width, height);
   // Apertura/creación temprana del mapping: si este proceso tiene SeCreateGlobalPrivilege (el
@@ -45,11 +48,16 @@ bool FrameSource::ensureMapping(int64_t now100ns) {
   if (mapping_.valid()) return true;
   if (now100ns - lastOpenAttempt100ns_ < kOpenRetryInterval100ns && lastOpenAttempt100ns_ != 0) return false;
   lastOpenAttempt100ns_ = now100ns;
-  return openOrCreateFramesMapping(mapping_);
+  if (!openOrCreateFramesMapping(mapping_)) return false;
+  // Anuncia que esta DLL acepta NV12: el shell deja de convertir a RGBA (y esta DLL de volver a NV12).
+  mapping_.header()->consumerCaps = kConsumerCapNV12;
+  MemoryBarrier();
+  return true;
 }
 
-// Copia el último slot completo a producerRgba_ y lo escala a scaledRgba_. Devuelve false si no hay
-// frame nuevo utilizable (sin productor, productor caído o slot en escritura).
+// Copia el último slot completo y lo deja a la resolución de salida en frameNv12_ (productor NV12) o en
+// frameRgba_ (productor RGBA8). Devuelve false si no hay frame utilizable (sin productor, productor
+// caído o slot en escritura); true también si no hay frame nuevo (se reutiliza el último).
 bool FrameSource::readLatestFrame(int64_t now100ns) {
   if (!ensureMapping(now100ns)) return false;
   SharedHeader* header = mapping_.header();
@@ -71,54 +79,62 @@ bool FrameSource::readLatestFrame(int64_t now100ns) {
     const uint32_t w = slot->width;
     const uint32_t h = slot->height;
     const int64_t ts = slot->timestamp100ns;
-    if (seqBegin == 0 || slot->format != PixelFormat_RGBA8) continue;
+    const uint32_t format = slot->format;
+    if (seqBegin == 0 || (format != PixelFormat_RGBA8 && format != PixelFormat_NV12)) continue;
     if (w < 2 || h < 2 || w > kMaxWidth || h > kMaxHeight) continue;
+    const bool nv12 = format == PixelFormat_NV12;
+    if (nv12 && ((w | h) & 1)) continue;
     MemoryBarrier();
     if (slot->seqEnd != seqBegin) continue;  // en escritura
 
-    const size_t bytes = size_t(w) * h * 4;
-    producerRgba_.resize(bytes);
-    std::memcpy(producerRgba_.data(), slotPixels(slot), bytes);
+    const size_t bytes = nv12 ? nv12Size(w, h) : size_t(w) * h * 4;
+    slotCopy_.resize(bytes);
+    std::memcpy(slotCopy_.data(), slotPixels(slot), bytes);
     MemoryBarrier();
     if (slot->seqBegin != seqBegin || slot->seqEnd != seqBegin) continue;  // sobrescrito durante la copia
 
-    scaleRgbaLetterbox(producerRgba_.data(), w, h, scaledRgba_.data(), width_, height_);
+    if (nv12) {
+      // Misma resolución (Meet): la copia del slot ES el frame; se intercambian buffers sin copiar.
+      if (w == width_ && h == height_) slotCopy_.swap(frameNv12_);
+      else scaleNv12Letterbox(slotCopy_.data(), w, h, frameNv12_.data(), width_, height_);
+      nv12Valid_ = true;
+    } else {
+      scaleRgbaLetterbox(slotCopy_.data(), w, h, frameRgba_.data(), width_, height_);
+      nv12Valid_ = false;
+    }
+    frameIsNv12_ = nv12;
     lastProducerSeq_ = seq;
     lastProducerTimestamp_ = ts;
-    nv12CacheValid_ = false;
     return true;
   }
   return false;
 }
 
 int64_t FrameSource::produce(int64_t now100ns, uint8_t* dst, int32_t pitch) {
-  const bool haveProducer = readLatestFrame(now100ns);
-  producerLive_ = haveProducer;
-
-  const uint8_t* rgba = nullptr;
-  int64_t timestamp = now100ns;
-  if (haveProducer) {
-    rgba = scaledRgba_.data();
-    lastWasFallback_ = false;
-    // El timestamp del productor sirve para diagnóstico; el sample usa el reloj de emisión.
-    timestamp = now100ns;
-  } else {
-    rgba = fallback_.render(now100ns);
-    lastWasFallback_ = true;
-    nv12CacheValid_ = false;  // la animación cambia cada tick
+  // El timestamp del productor sirve para diagnóstico; el sample usa el reloj de emisión.
+  producerLive_ = readLatestFrame(now100ns);
+  if (!producerLive_) {
+    const uint8_t* rgba = fallback_.render(now100ns);  // la animación cambia cada tick
+    if (format_ == OutputFormat::RGB32) {
+      rgbaToBgrx(rgba, width_, height_, dst, pitch);
+    } else {
+      rgbaToNv12(rgba, width_, height_, fallbackNv12_.data(), int32_t(width_));
+      copyNv12(fallbackNv12_.data(), width_, height_, dst, pitch);
+    }
+    return now100ns;
   }
 
   if (format_ == OutputFormat::RGB32) {
-    rgbaToBgrx(rgba, width_, height_, dst, pitch);
-    return timestamp;
+    if (frameIsNv12_) nv12ToBgrx(frameNv12_.data(), width_, height_, dst, pitch);
+    else rgbaToBgrx(frameRgba_.data(), width_, height_, dst, pitch);
+    return now100ns;
   }
-
-  if (!nv12CacheValid_) {
-    rgbaToNv12(rgba, width_, height_, nv12Cache_.data(), int32_t(width_));
-    nv12CacheValid_ = true;
+  if (!nv12Valid_) {  // productor RGBA8: se convierte una vez por frame nuevo
+    rgbaToNv12(frameRgba_.data(), width_, height_, frameNv12_.data(), int32_t(width_));
+    nv12Valid_ = true;
   }
-  copyNv12(nv12Cache_.data(), width_, height_, dst, pitch);
-  return timestamp;
+  copyNv12(frameNv12_.data(), width_, height_, dst, pitch);
+  return now100ns;
 }
 
 }  // namespace voxora::vcam

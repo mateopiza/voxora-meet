@@ -352,3 +352,56 @@ test('errores: modelo inexistente o sin acceso → model_unavailable con mensaje
   assert.equal(timeout.code, 'network');
   assert.match(timeout.message, /Groq no respondió a tiempo/);
 });
+
+test('proveedores por etapa: Scribe + OpenAI en createPipeline, key faltante y cambio en caliente', async (t) => {
+  await withEngine(t, async ({ controller, store, handlers, server }) => {
+    await store.save({ sttProvider: 'elevenlabs', translateProvider: 'openai' });
+    const settings = { ...(await store.load()), voiceId: 'VozClonada01' };
+    assert.deepEqual([settings.sttModel, settings.translateModel], ['scribe_v2', 'gpt-4.1'], 'al cambiar de proveedor se usa su modelo por defecto');
+
+    // Falta la key del proveedor elegido → missing_key que lo nombra (Groq ya no es obligatorio).
+    await assert.rejects(controller.deps.createPipeline({ settings, keys: { elevenlabs: 'x' } }), (error) => {
+      assert.equal(error.code, 'missing_key');
+      assert.match(error.message, /OpenAI \(traducción\)/);
+      return true;
+    });
+
+    const pipeline = await controller.deps.createPipeline({ settings, keys: { elevenlabs: 'x', openai: 'sk-o' } });
+    let s = pipeline.currentSettings();
+    assert.deepEqual([s.sttProvider, s.sttModel, s.translateProvider, s.translateModel], ['elevenlabs', 'scribe_v2', 'openai', 'gpt-4.1']);
+
+    // Sesión en curso: volver a Groq sustituye los clientes sin reiniciar.
+    controller.session = { syncBuffer: new SyncBuffer({ delayMs: 3000 }), pipeline };
+    await handlers['settings.set']({ settings: { sttProvider: 'groq', translateProvider: 'groq' } });
+    s = pipeline.currentSettings();
+    assert.deepEqual([s.sttProvider, s.sttModel, s.translateProvider, s.translateModel], ['groq', 'whisper-large-v3', 'groq', 'openai/gpt-oss-120b']);
+
+    // Sin key del proveedor nuevo: la etapa sigue con el anterior (y su modelo) y se avisa.
+    const warns = [];
+    controller.on('warn', (w) => warns.push(w));
+    await handlers['settings.set']({ settings: { translateProvider: 'openai' } });
+    s = pipeline.currentSettings();
+    assert.deepEqual([s.translateProvider, s.translateModel], ['groq', 'openai/gpt-oss-120b']);
+    assert.equal(warns.length, 1);
+    assert.equal(warns[0].kind, 'provider');
+    assert.match(warns[0].message, /OpenAI.*sigue con el proveedor anterior/);
+    controller.session = null;
+    void server;
+  });
+});
+
+test('errores: el proveedor del mensaje es el del cliente que falló (OpenAI, Scribe)', () => {
+  const openai = friendlyError(new TranslationError('OpenAI Chat 401: invalid_api_key', { status: 401, model: 'gpt-4.1', provider: 'openai' }));
+  assert.equal(openai.code, 'provider_auth');
+  assert.match(openai.message, /^OpenAI no aceptó la API key/);
+  const scribe = friendlyError(new SttError('ElevenLabs Scribe 429: too many requests', { status: 429, model: 'scribe_v2', provider: 'elevenlabs' }));
+  assert.equal(scribe.code, 'provider_quota');
+  assert.match(scribe.message, /^ElevenLabs alcanzó/);
+  const scribe404 = friendlyError(new SttError('ElevenLabs Scribe 404: not found', { status: 404, model: 'scribe_v2', provider: 'elevenlabs' }));
+  assert.notEqual(scribe404.code, 'voice_missing', 'un 404 del STT no es una voz inexistente');
+  const groq = friendlyError(new TranslationError('Groq Chat 401: invalid_api_key', { status: 401, model: 'openai/gpt-oss-120b', provider: 'groq' }));
+  assert.match(groq.message, /^Groq no aceptó/);
+  const model = friendlyError(new TranslationError('OpenAI Chat 404: {"error":{"message":"The model `gpt-9` does not exist or you do not have access to it.","code":"model_not_found"}}', { status: 404, model: 'gpt-9', provider: 'openai' }));
+  assert.equal(model.code, 'model_unavailable');
+  assert.match(model.message, /«gpt-9».*cuenta de OpenAI/);
+});

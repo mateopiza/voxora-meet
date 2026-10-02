@@ -1,6 +1,8 @@
-// Origen de frames para el media stream: lee el ring de memoria compartida escrito por
-// VoxoraMeetFrameWriter.exe, lo adapta a la resolución negociada y lo convierte al formato de salida.
-// Si no hay productor (o dejó de latir) genera el frame de "esperando".
+// Origen de frames para el media stream: lee el ring de memoria compartida escrito por el shell
+// (NV12, o RGBA8 con un shell anterior) o por VoxoraMeetFrameWriter.exe (RGBA8), lo adapta a la
+// resolución negociada y lo convierte al formato de salida. NV12 del productor a NV12 de la misma
+// resolución (el caso de Meet) es una copia, sin conversión de color. Si no hay productor (o dejó de
+// latir) genera el frame de "esperando".
 #pragma once
 
 #ifndef WIN32_LEAN_AND_MEAN
@@ -53,14 +55,15 @@ class FrameSource {
   uint32_t height_ = 0;
   OutputFormat format_ = OutputFormat::NV12;
 
-  std::vector<uint8_t> producerRgba_;  // copia cruda del slot (tamaño del productor)
-  std::vector<uint8_t> scaledRgba_;    // RGBA a la resolución de salida
-  std::vector<uint8_t> nv12Cache_;     // NV12 empaquetado cacheado del último frame convertido
+  std::vector<uint8_t> slotCopy_;      // copia cruda del slot (tamaño y formato del productor)
+  std::vector<uint8_t> frameRgba_;     // último frame RGBA8 del productor a la resolución de salida
+  std::vector<uint8_t> frameNv12_;     // último frame NV12 del productor (o el RGBA convertido, cacheado)
+  std::vector<uint8_t> fallbackNv12_;  // conversión de la imagen de espera (no pisa el último frame)
+  bool frameIsNv12_ = false;           // el último frame llegó en NV12: frameNv12_ es la referencia
+  bool nv12Valid_ = false;             // frameNv12_ corresponde al último frame
   uint32_t lastProducerSeq_ = 0;
   int64_t lastProducerTimestamp_ = 0;
-  bool nv12CacheValid_ = false;
   bool producerLive_ = false;
-  bool lastWasFallback_ = true;
 
   FallbackFrame fallback_;
 };

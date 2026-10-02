@@ -213,7 +213,7 @@ json::Value loadProviderKeys() {
 
 bool saveProviderKeys(const json::Value& keys) {
   json::Value clean;
-  for (const char* name : {"groq", "elevenlabs"}) {
+  for (const char* name : {"groq", "elevenlabs", "openai"}) {
     const std::string& value = keys[name].asString();
     if (!value.empty()) clean.set(name, value);
   }

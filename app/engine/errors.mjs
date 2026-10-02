@@ -4,9 +4,11 @@
 // se devuelve un mensaje genérico y el detalle viaja aparte en `detail`.
 
 const PROVIDERS = [
+  { id: 'openai', label: 'OpenAI', match: /\bOpenAI (Chat|STT)\b|api\.openai\.com/ },
   { id: 'elevenlabs', label: 'ElevenLabs', match: /elevenlabs|tts|voices/i },
   { id: 'groq', label: 'Groq', match: /groq|whisper|stt|chat|translat/i },
 ];
+const byId = (id) => PROVIDERS.find((p) => p.id === id) ?? null;
 
 function collectText(error) {
   const parts = [];
@@ -31,9 +33,15 @@ function findStatus(error) {
 }
 
 function providerOf(error, text) {
-  if (error?.stage === 'tts') return PROVIDERS[0];
-  if (error?.stage === 'stt' || error?.stage === 'translate') return PROVIDERS[1];
-  if (error?.provider) return PROVIDERS.find((p) => p.id === error.provider) ?? null;
+  // El cliente que falló dice de qué proveedor es (STT y traducción pueden ser de Groq, OpenAI o ElevenLabs).
+  let current = error;
+  for (let depth = 0; current && typeof current === 'object' && depth < 5; depth += 1) {
+    const known = byId(current.provider);
+    if (known) return known;
+    current = current.cause;
+  }
+  if (error?.stage === 'tts') return byId('elevenlabs');
+  if (error?.stage === 'stt' || error?.stage === 'translate') return PROVIDERS.find((p) => p.id !== 'elevenlabs' && p.match.test(text)) ?? byId('groq');
   return PROVIDERS.find((p) => p.match.test(text)) ?? null;
 }
 
@@ -45,7 +53,7 @@ const PASSTHROUGH = new Set([
   'audio_route_invalid', 'audio_output_closed', 'audio_output_overload', 'audio_output_timeout', 'audio_capture_closed',
 ]);
 
-// Modelo inexistente, retirado o sin acceso (Groq: 404 model_not_found,
+// Modelo inexistente, retirado o sin acceso (Groq y OpenAI: 404 model_not_found,
 // model_decommissioned, permisos por organización/proyecto, términos sin aceptar;
 // ElevenLabs: model_not_found / modelo que no hace TTS).
 const MODEL_UNAVAILABLE = /model_not_found|model_decommissioned|model_terms_required|model_permission|permission_blocked|invalid_model|model_id_not_found|does not exist or you do not have access|has been decommissioned|can_not_do_text_to_speech|cannot do text[- ]to[- ]speech|model\b[^|]{0,80}\b(not found|does not exist|is not available|not available for|no longer (available|supported)|deprecated|decommissioned)/i;
@@ -113,7 +121,7 @@ export function friendlyError(error) {
       detail,
     };
   }
-  if (/voice_not_found|voice.*(not found|does not exist)/i.test(text) || (status === 404 && provider?.id === 'elevenlabs')) {
+  if (/voice_not_found|voice.*(not found|does not exist)/i.test(text) || (status === 404 && provider?.id === 'elevenlabs' && findField(error, 'stage') !== 'stt')) {
     return { code: 'voice_missing', message: 'La voz seleccionada ya no existe en tu cuenta de ElevenLabs. Elige otra en la pestaña Voz.', detail };
   }
   if (/no tiene voz clonada|falta `voiceId`/i.test(text)) {

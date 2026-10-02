@@ -104,7 +104,8 @@ inline bool openOrCreateFramesMapping(FramesMapping& out, DWORD* lastError = nul
 
 // Evento auto-reset "frame listo". Cualquiera de los dos procesos puede crearlo: a diferencia del
 // mapping, crear un evento en `Global\` no exige SeCreateGlobalPrivilege (comprobado desde un proceso
-// de usuario no elevado). La DLL no lo espera (produce con su propio timer): es solo un aviso.
+// de usuario no elevado). La DLL lo espera para entregar cada frame en cuanto llega (con un timer de
+// respaldo si el productor calla o el evento no se pudo abrir).
 inline HANDLE openOrCreateFrameReadyEvent() {
   SharedSecurity security;
   HANDLE h = CreateEventW(security.get(), FALSE, FALSE, kFrameReadyEventName);

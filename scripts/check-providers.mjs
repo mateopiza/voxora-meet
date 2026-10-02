@@ -1,5 +1,5 @@
 // Verifica que las keys de proveedor respondan (sin gastar créditos de TTS).
-// Lee GROQ_API_KEY y ELEVENLABS_API_KEY del entorno o de ../.env (CORE).
+// Lee GROQ_API_KEY, ELEVENLABS_API_KEY y OPENAI_API_KEY (opcional) del entorno o de ../.env (CORE).
 import { readFileSync, existsSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -45,5 +45,16 @@ const results = await Promise.all([
     const sub = await res.json();
     return `tier ${sub.tier}, ${sub.character_count}/${sub.character_limit} chars, IVC=${sub.can_use_instant_voice_cloning}, PVC=${sub.can_use_professional_voice_cloning}`;
   }),
+  // Opcional: solo hace falta si se elige OpenAI como proveedor de transcripción o traducción.
+  ...(process.env.OPENAI_API_KEY ? [check('OpenAI (traducción + STT, opcional)', async () => {
+    const res = await fetch('https://api.openai.com/v1/models', { headers: { Authorization: `Bearer ${process.env.OPENAI_API_KEY}` } });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    const ids = new Set((data.data || []).map((m) => m.id));
+    const need = ['gpt-4o-transcribe', process.env.VOXORA_MEET_OPENAI_MODEL || 'gpt-4.1'];
+    const missing = need.filter((id) => !ids.has(id));
+    if (missing.length) throw new Error(`modelos no disponibles: ${missing.join(', ')}`);
+    return need.join(' + ');
+  })] : []),
 ]);
 process.exit(results.every(Boolean) ? 0 : 1);

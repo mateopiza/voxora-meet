@@ -30,7 +30,7 @@ namespace {
 
 // Canal público de producción (lectura anónima por policy limitada al prefijo; ver docs/RELEASE.md).
 // Debe coincidir con `config.updateFeed` del package.json (lo comprueba scripts/verify-release.mjs).
-constexpr wchar_t kDefaultFeed[] = L"https://s3.g.megas4.com/voixa/voxora-meet-updates/latest.json";
+constexpr wchar_t kDefaultFeed[] = L"https://s3.g.megas4.com/voxora-meet/voxora-meet-updates/latest.json";
 // Certificados de firma aceptados (SHA1 del firmante). Al renovar el certificado, publicar ANTES una
 // versión firmada con el actual que ya incluya el thumbprint nuevo (docs/RELEASE.md).
 const wchar_t* const kTrustedThumbprints[] = {

@@ -96,7 +96,7 @@ test('keys de proveedor: cifradas en disco, nunca en claro, estado booleano para
   const settingsJson = fs.files.get(path.join('X', 'settings.json'));
   assert.equal(settingsJson === undefined || !settingsJson.includes('gsk_secret'), true);
 
-  assert.deepEqual(await store.providerKeyStatus(), { groq: true, elevenlabs: true });
+  assert.deepEqual(await store.providerKeyStatus(), { groq: true, elevenlabs: true, openai: false });
   const store2 = createSettingsStore({ dir: 'X', fs, crypto: fakeCrypto() });
   assert.deepEqual(await store2.getProviderKeys(), { groq: 'gsk_secret', elevenlabs: 'el_secret' });
 
@@ -115,7 +115,7 @@ test('sin DPAPI disponible no se guardan keys en claro', async () => {
 });
 
 test('normalizeProviderKeys y directorio por defecto', () => {
-  assert.deepEqual(normalizeProviderKeys({ groq: ' a ', openai: 'x', deepgram: 7, elevenlabs: 'b', extra: 'c' }), { groq: 'a', elevenlabs: 'b' });
+  assert.deepEqual(normalizeProviderKeys({ groq: ' a ', openai: ' o ', openrouter: 'x', deepgram: 7, elevenlabs: 'b', extra: 'c' }), { groq: 'a', elevenlabs: 'b', openai: 'o' });
   assert.equal(defaultDataDir({ APPDATA: 'C:\\Users\\u\\AppData\\Roaming' }), path.join('C:\\Users\\u\\AppData\\Roaming', 'VOXORA Meet'));
 });
 
@@ -219,6 +219,22 @@ test('protocolo v3: recorte de rangos, enums y saneado de ids de modelo', async 
   assert.equal(n({ ttsModel: 'eleven_v3' }).ttsModel, 'eleven_v3');
   assert.equal(n({ sttModel: 'whisper-large-v3-turbo' }).sttModel, 'whisper-large-v3-turbo');
   assert.equal(n({ sttModel: 'openai/gpt-oss-120b' }).sttModel, 'whisper-large-v3', 'el STT debe ser Whisper');
+
+  // Proveedor por etapa: el modelo debe ser del proveedor elegido; si no, el de por defecto de ese proveedor.
+  assert.equal(n({}).sttProvider, 'groq');
+  assert.equal(n({}).translateProvider, 'groq');
+  assert.equal(n({ sttProvider: 'deepgram' }).sttProvider, 'groq');
+  assert.equal(n({ translateProvider: 'elevenlabs' }).translateProvider, 'groq', 'ElevenLabs no traduce');
+  assert.equal(n({ sttProvider: 'elevenlabs' }).sttModel, 'scribe_v2');
+  assert.equal(n({ sttProvider: 'elevenlabs', sttModel: 'scribe_v1' }).sttModel, 'scribe_v1');
+  assert.equal(n({ sttProvider: 'elevenlabs', sttModel: 'scribe_v2_realtime' }).sttModel, 'scribe_v2', 'realtime es por WebSocket');
+  assert.equal(n({ sttProvider: 'openai', sttModel: 'whisper-large-v3' }).sttModel, 'gpt-4o-transcribe');
+  assert.equal(n({ sttProvider: 'openai', sttModel: 'whisper-1' }).sttModel, 'whisper-1');
+  assert.equal(n({ sttProvider: 'groq', sttModel: 'whisper-1' }).sttModel, 'whisper-large-v3');
+  assert.equal(n({ translateProvider: 'openai' }).translateModel, 'gpt-4.1');
+  assert.equal(n({ translateProvider: 'openai', translateModel: 'gpt-4o' }).translateModel, 'gpt-4o');
+  assert.equal(n({ translateProvider: 'openai', translateModel: 'openai/gpt-oss-120b' }).translateModel, 'gpt-4.1');
+  assert.equal(n({ translateProvider: 'groq', translateModel: 'gpt-4o' }).translateModel, 'openai/gpt-oss-120b');
   assert.equal(cleanModelId('-raro', 'd'), 'd');
   assert.ok(MODEL_SETTING_KEYS.includes('memoryTurns') && MODEL_SETTING_KEYS.includes('ttsModel'));
 });

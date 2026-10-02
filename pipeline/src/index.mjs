@@ -1,11 +1,13 @@
 // Punto de entrada de @voxora-meet/pipeline.
 
-export { GroqWhisperStt, SttError, DEFAULT_WHISPER_MODEL, clampSttTemperature, buildVocabularyPrompt, whisperDiscardReason, shouldDiscardWhisperTranscript, summarizeSegments } from "./stt/groq-whisper.mjs";
+export { GroqWhisperStt, SttError, DEFAULT_WHISPER_MODEL, DEFAULT_OPENAI_STT_MODEL, clampSttTemperature, buildVocabularyPrompt, whisperDiscardReason, shouldDiscardWhisperTranscript, summarizeSegments, confidenceFromLogprobs } from "./stt/groq-whisper.mjs";
+export { ElevenLabsScribeStt, DEFAULT_SCRIBE_MODEL, buildKeyterms, scribeConfidence, scribeDiscardReason, scribeSupportsKeyterms } from "./stt/elevenlabs-scribe.mjs";
 export {
   ContextTranslator,
   TranslationError,
   TONES,
   DEFAULT_TRANSLATE_MODEL,
+  DEFAULT_OPENAI_TRANSLATE_MODEL,
   REASONING_EFFORTS,
   buildSystemPrompt,
   cleanTranslation,

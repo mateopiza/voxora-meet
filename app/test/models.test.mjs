@@ -11,6 +11,7 @@ import {
   MODEL_DEFAULTS,
   GROQ_MODELS_URL,
   ELEVEN_MODELS_URL,
+  OPENAI_MODELS_URL,
 } from '../engine/models.mjs';
 import { DEFAULTS } from '../engine/settings-store.mjs';
 import { reasoningParamsFor, chatReasoningProfile } from '../../pipeline/src/translate/groq-translate.mjs';
@@ -45,12 +46,20 @@ const ELEVEN = [
   { model_id: 'eleven_nuevo_x', name: 'Eleven Nuevo', can_do_text_to_speech: true, can_use_style: true, can_use_speaker_boost: false, languages: langs(12), model_rates: { character_cost_multiplier: 0.8 } },
 ];
 
-function mockProviders({ groq = () => Response.json(GROQ), eleven = () => Response.json(ELEVEN) } = {}) {
+const OPENAI = { data: [
+  { id: 'gpt-4.1' }, { id: 'gpt-4.1-2025-04-14' }, { id: 'gpt-4.1-mini' }, { id: 'gpt-4o' }, { id: 'gpt-5' },
+  { id: 'gpt-4o-transcribe' }, { id: 'gpt-4o-mini-transcribe' }, { id: 'gpt-4o-transcribe-diarize' }, { id: 'whisper-1' },
+  { id: 'gpt-4o-realtime-preview' }, { id: 'gpt-4o-audio-preview' }, { id: 'gpt-4o-mini-tts' }, { id: 'gpt-image-1' },
+  { id: 'text-embedding-3-small' }, { id: 'dall-e-3' }, { id: 'tts-1' }, { id: 'o1-pro' }, { id: 'gpt-4o-search-preview' },
+] };
+
+function mockProviders({ groq = () => Response.json(GROQ), eleven = () => Response.json(ELEVEN), openai = () => Response.json(OPENAI) } = {}) {
   const calls = [];
   const fetch = async (url, init) => {
     calls.push({ url: String(url), headers: init?.headers ?? {} });
     if (String(url) === GROQ_MODELS_URL) return groq(init);
     if (String(url) === ELEVEN_MODELS_URL) return eleven(init);
+    if (String(url) === OPENAI_MODELS_URL) return openai(init);
     throw new Error(`URL inesperada ${url}`);
   };
   return { fetch, calls };
@@ -67,7 +76,7 @@ test('models.list en vivo: STT = whisper, traducción = chat activos sin guard/t
   const { catalog, calls } = catalogWith();
   const res = await catalog.list();
   assert.equal(res.offline, false);
-  assert.deepEqual(res.sources, { groq: 'live', elevenlabs: 'live' });
+  assert.deepEqual(res.sources, { groq: 'live', elevenlabs: 'live', openai: 'static' });
   assert.deepEqual(res.errors, {});
   assert.equal(typeof res.fetchedAt, 'string');
   assert.equal(calls[0].headers.Authorization, 'Bearer gsk_1');
@@ -174,7 +183,7 @@ test('sin red: catálogo estático con offline:true y error de red amigable; los
   });
   const res = await catalog.list();
   assert.equal(res.offline, true);
-  assert.deepEqual(res.sources, { groq: 'static', elevenlabs: 'static' });
+  assert.deepEqual(res.sources, { groq: 'static', elevenlabs: 'static', openai: 'static' });
   assert.equal(res.errors.groq.code, 'network');
   assert.match(res.errors.groq.message, /Groq/);
   assert.equal(res.errors.elevenlabs.code, 'network');
@@ -239,9 +248,64 @@ test('coherencia: el catálogo anuncia exactamente lo que el pipeline aplica', (
   for (const id of ttsIds) assert.deepEqual(ttsCapabilitiesFor(id), ttsModelCapabilities(id), id);
 });
 
+test('proveedor por etapa: Scribe para transcribir y OpenAI para traducir', async () => {
+  const { catalog, calls } = catalogWith({ keys: { groq: 'gsk_1', elevenlabs: 'xi_1', openai: 'sk-1' } });
+  const settings = { ...DEFAULTS, sttProvider: 'elevenlabs', sttModel: 'scribe_v2', translateProvider: 'openai', translateModel: 'gpt-4.1' };
+  const res = await catalog.list({ settings });
+  assert.equal(calls.find((c) => c.url === OPENAI_MODELS_URL).headers.Authorization, 'Bearer sk-1');
+  assert.equal(res.offline, false);
+  assert.deepEqual(res.sources, { groq: 'live', elevenlabs: 'live', openai: 'live' });
+
+  // `stt` / `translate` son las listas del proveedor elegido.
+  assert.deepEqual(res.stt.map((m) => m.id), ['scribe_v2', 'scribe_v1']);
+  assert.equal(res.stt[0].provider, 'elevenlabs');
+  assert.equal(res.stt[0].recommended, true);
+  assert.equal(res.stt[0].price.usd, 0.4);
+  assert.deepEqual(res.translate.map((m) => m.id), ['gpt-4.1', 'gpt-4.1-2025-04-14', 'gpt-4.1-mini', 'gpt-4o', 'gpt-5']);
+  const gpt41 = res.translate[0];
+  assert.equal(gpt41.provider, 'openai');
+  assert.equal(gpt41.label, 'GPT-4.1');
+  assert.equal(gpt41.recommended, true);
+  assert.deepEqual([gpt41.price.usd, gpt41.price.usdOutput, gpt41.price.source], [2, 8, 'table']);
+  assert.equal(gpt41.supportsReasoningEffort, false);
+  const snapshot = res.translate[1];
+  assert.equal(snapshot.label, 'GPT-4.1 · 2025-04-14');
+  assert.equal(snapshot.recommended, false);
+  assert.equal(snapshot.price.usd, 2, 'el snapshot hereda el precio del modelo base');
+  assert.deepEqual(res.translate.find((m) => m.id === 'gpt-5').reasoningEfforts, ['low', 'medium', 'high']);
+
+  // Las listas de todos los proveedores viajan para que la UI cambie sin otra consulta.
+  assert.deepEqual(res.sttByProvider.openai.map((m) => m.id), ['gpt-4o-transcribe', 'gpt-4o-mini-transcribe', 'whisper-1']);
+  assert.deepEqual(res.sttByProvider.groq.map((m) => m.id), ['whisper-large-v3', 'whisper-large-v3-turbo']);
+  assert.equal(res.translateByProvider.groq.some((m) => m.id === 'openai/gpt-oss-120b'), true);
+  assert.equal(res.translateByProvider.openai, res.translate);
+  assert.deepEqual(res.providers.stt, ['groq', 'elevenlabs', 'openai']);
+  assert.deepEqual(res.providers.translate, ['groq', 'openai']);
+  assert.equal(res.providers.defaults.stt.elevenlabs, 'scribe_v2');
+  assert.equal(res.providers.defaults.translate.openai, 'gpt-4.1');
+  assert.equal(res.providers.labels.openai, 'OpenAI');
+});
+
+test('proveedor por etapa: solo los proveedores en uso marcan el catálogo como offline', async () => {
+  // Sin key de OpenAI y sin usarlo: el catálogo sigue «en vivo».
+  let res = await catalogWith().catalog.list({ settings: DEFAULTS });
+  assert.equal(res.offline, false);
+  assert.deepEqual(res.errors, {});
+  assert.equal(res.sttByProvider.openai[0].source, 'static', 'OpenAI cae al catálogo de referencia');
+
+  // Con OpenAI elegido para traducir y sin key: offline + error de esa sección.
+  res = await catalogWith().catalog.list({ settings: { ...DEFAULTS, translateProvider: 'openai', translateModel: 'gpt-4.1' } });
+  assert.equal(res.offline, true);
+  assert.equal(res.errors.openai.code, 'missing_key');
+  assert.match(res.errors.openai.message, /API key de OpenAI/);
+  assert.equal(res.translate[0].id, 'gpt-4.1');
+});
+
 test('buildCatalog y describeTtsModel toleran respuestas incompletas', () => {
   const empty = buildCatalog({ groq: [null, {}, { id: 'whisper-x', active: false }], elevenlabs: [{}, { model_id: 'x' }] });
-  assert.deepEqual(empty, { stt: [], translate: [], tts: [] });
+  assert.deepEqual([empty.stt, empty.translate, empty.tts], [[], [], []]);
+  assert.deepEqual(empty.sttByProvider.elevenlabs.map((m) => m.id), ['scribe_v2', 'scribe_v1'], 'Scribe es una lista curada');
+  assert.deepEqual([empty.sttByProvider.openai, empty.translateByProvider.openai], [[], []]);
   const bare = describeTtsModel({ model_id: 'eleven_v3' }, 'static');
   assert.equal(bare.languages, 74);
   assert.equal(bare.maxChars, 5000);

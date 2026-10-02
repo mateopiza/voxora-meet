@@ -1,14 +1,17 @@
-// Humo REAL del pipeline (gasta ~1 s de Groq y ~60 caracteres de ElevenLabs):
-// genera una frase en español con SAPI (gratis), la transcribe con Groq Whisper,
-// la traduce con Groq y sintetiza la traducción con ElevenLabs. Uso:
+// Humo REAL del pipeline (gasta ~6 s de STT, una traducción y ~60 caracteres de ElevenLabs):
+// genera una frase en español con SAPI (gratis), la transcribe, la traduce y
+// sintetiza la traducción con ElevenLabs. Por defecto usa Groq en ambas etapas. Uso:
 //   node scripts/smoke-pipeline.mjs [--voice <voiceId>] [--no-tts]
+//     [--stt groq|elevenlabs|openai] [--stt-model <id>]
+//     [--translate groq|openai] [--translate-model <id>]
+// Ej. (Scribe v2 + GPT-4.1): --stt elevenlabs --translate openai --no-tts
 import { execFileSync } from 'node:child_process';
 import { readFileSync, existsSync, mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
-  GroqWhisperStt, ContextTranslator, ElevenLabsTts, wavToPcm, DubbingPipeline,
+  GroqWhisperStt, ElevenLabsScribeStt, ContextTranslator, ElevenLabsTts, wavToPcm, DubbingPipeline,
 } from '../pipeline/src/index.mjs';
 import { resamplePcm16 } from '../capture/src/resample.mjs';
 
@@ -21,7 +24,11 @@ if (existsSync(envFile)) {
   }
 }
 const args = process.argv.slice(2);
-const voiceId = args.includes('--voice') ? args[args.indexOf('--voice') + 1] : process.env.ELEVENLABS_VOICE_ID;
+const arg = (name) => (args.includes(name) ? args[args.indexOf(name) + 1] : undefined);
+const voiceId = arg('--voice') ?? process.env.ELEVENLABS_VOICE_ID;
+const sttProvider = arg('--stt') ?? 'groq';
+const translateProvider = arg('--translate') ?? 'groq';
+const optional = (key, value) => (value ? { [key]: value } : {});
 const withTts = !args.includes('--no-tts');
 const PHRASE = 'Buenos días a todos. Hoy revisaremos el presupuesto del tercer trimestre y los plazos de entrega.';
 
@@ -46,19 +53,20 @@ const turn = { pcm, sampleRate: 16000, startedAt, endedAt: startedAt + (pcm.byte
 console.log(`Entrada: "${PHRASE}" (${Math.round(turn.voicedMs)} ms de audio SAPI)`);
 
 // 2) Pipeline real.
-const stt = new GroqWhisperStt({ language: 'es' });
-const translator = new ContextTranslator({ sourceLanguage: 'es', targetLanguage: 'en', tone: 'professional' });
+const sttOptions = { language: 'es', ...optional('model', arg('--stt-model')) };
+const stt = sttProvider === 'elevenlabs' ? new ElevenLabsScribeStt(sttOptions) : new GroqWhisperStt({ ...sttOptions, provider: sttProvider });
+const translator = new ContextTranslator({ provider: translateProvider, sourceLanguage: 'es', targetLanguage: 'en', tone: 'professional', ...optional('model', arg('--translate-model')) });
 const tts = withTts ? new ElevenLabsTts() : { synthesize: async () => { throw new Error('TTS desactivado (--no-tts)'); } };
 if (withTts && !voiceId) { console.error('Falta --voice o ELEVENLABS_VOICE_ID'); process.exit(2); }
 
 const t0 = performance.now();
 const transcript = await stt.transcribeTurn({ pcm, sampleRate: 16000 });
 const t1 = performance.now();
-console.log(`STT (${Math.round(t1 - t0)} ms): "${transcript.text}" conf=${transcript.confidence?.toFixed?.(2) ?? '-'} descartado=${Boolean(transcript.discarded)}`);
+console.log(`STT ${sttProvider}/${transcript.model} (${Math.round(t1 - t0)} ms): "${transcript.text}" conf=${transcript.confidence?.toFixed?.(2) ?? '-'} descartado=${Boolean(transcript.discarded)}`);
 if (!transcript.text) process.exit(1);
 const translated = await translator.translate({ text: transcript.text });
 const t2 = performance.now();
-console.log(`Traducción (${Math.round(t2 - t1)} ms, ${translated.model}): "${translated.translation}" tokens=${JSON.stringify(translated.usage)}`);
+console.log(`Traducción ${translateProvider}/${translated.model} (${Math.round(t2 - t1)} ms): "${translated.translation}" tokens=${JSON.stringify(translated.usage)}`);
 if (!withTts) process.exit(0);
 
 const pipeline = new DubbingPipeline({ stt, translator, tts, voiceId, sourceLanguage: 'es', targetLanguage: 'en' });

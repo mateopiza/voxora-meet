@@ -170,3 +170,54 @@ test("timeout y abort", async (t) => {
   controller.abort();
   await assert.rejects(p, (e) => e.name === "AbortError");
 });
+
+test("provider openai: URL y key de OpenAI, gpt-4.1 por defecto, sin parámetros de razonamiento", async (t) => {
+  const { calls } = mockFetch(t, () => jsonResponse(chatResponse("Let's start.", { model: "gpt-4.1-2025-04-14" })));
+  const translator = new ContextTranslator({ provider: "openai", apiKey: "sk-openai", sleep: instantSleep });
+  assert.deepEqual([translator.provider, translator.model], ["openai", "gpt-4.1"]);
+  const res = await translator.translate({ text: "Empecemos." });
+  assert.equal(calls[0].url, "https://api.openai.com/v1/chat/completions");
+  assert.equal(calls[0].headers.Authorization, "Bearer sk-openai");
+  const body = JSON.parse(calls[0].body);
+  assert.equal(body.model, "gpt-4.1");
+  assert.equal(body.temperature, 0.2);
+  assert.equal("reasoning_effort" in body, false);
+  assert.ok(body.max_completion_tokens >= 256);
+  assert.equal(res.translation, "Let's start.");
+  assert.equal(res.model, "gpt-4.1-2025-04-14", "se cobra con el modelo que respondió");
+});
+
+test("provider openai: los modelos que razonan (gpt-5, o-series) van con reasoning_effort y sin temperature", async (t) => {
+  const { calls } = mockFetch(t, () => jsonResponse(chatResponse("Hi.", { model: "gpt-5" })));
+  const translator = new ContextTranslator({ provider: "openai", apiKey: "sk-openai", model: "gpt-5", reasoningEffort: "none", sleep: instantSleep });
+  await translator.translate({ text: "Hola." });
+  const body = JSON.parse(calls[0].body);
+  assert.equal(body.reasoning_effort, "low");
+  assert.equal("temperature" in body, false);
+});
+
+test("provider openai: si el modelo rechaza temperature se reintenta sin ella y se recuerda", async (t) => {
+  const { calls } = mockFetchSequence(t, [
+    () => textResponse('{"error":{"message":"Unsupported value: \'temperature\' does not support 0.2 with this model. Only the default (1) value is supported.","param":"temperature"}}', { status: 400 }),
+    () => jsonResponse(chatResponse("Hi.")),
+    () => jsonResponse(chatResponse("Bye.")),
+  ]);
+  const translator = new ContextTranslator({ provider: "openai", apiKey: "sk-openai", model: "gpt-4o-nuevo", sleep: instantSleep });
+  assert.equal((await translator.translate({ text: "Hola." })).translation, "Hi.");
+  assert.equal(calls.length, 2);
+  assert.equal("temperature" in JSON.parse(calls[1].body), false);
+  await translator.translate({ text: "Adiós." });
+  assert.equal(calls.length, 3, "no vuelve a probar con temperature");
+  assert.equal("temperature" in JSON.parse(calls[2].body), false);
+});
+
+test("provider openai: los errores llevan el proveedor para el mensaje al usuario", async (t) => {
+  mockFetch(t, () => textResponse('{"error":{"code":"invalid_api_key"}}', { status: 401 }));
+  const translator = new ContextTranslator({ provider: "openai", apiKey: "sk-bad", sleep: instantSleep });
+  await assert.rejects(translator.translate({ text: "Hola." }), (error) => {
+    assert.ok(error instanceof TranslationError);
+    assert.deepEqual([error.status, error.provider, error.model], [401, "openai", "gpt-4.1"]);
+    assert.match(error.message, /OpenAI Chat 401/);
+    return true;
+  });
+});

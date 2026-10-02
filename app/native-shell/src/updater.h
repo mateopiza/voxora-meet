@@ -1,6 +1,6 @@
 // Actualizaciones automáticas de VOXORA Meet (S3 de MEGA, lectura pública por HTTPS).
 //
-// Canal: `latest.json` en https://s3.g.megas4.com/voixa/voxora-meet-updates/ con
+// Canal: `latest.json` en https://s3.g.megas4.com/voxora-meet/voxora-meet-updates/ con
 //   { version, url, sha256, size, releaseNotes, minSupportedVersion, publishedAt }
 // (`url` absoluta o relativa al manifiesto). Lo genera y sube scripts/publish.mjs.
 //

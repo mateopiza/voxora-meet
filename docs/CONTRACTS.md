@@ -97,9 +97,11 @@ Ajustes planos nuevos (en `settings.json`, normalizados por el engine; valores f
 
 | Clave | Default | Rango / valores |
 |---|---|---|
-| `sttModel` | `whisper-large-v3` | id de Groq con "whisper" |
+| `sttProvider` | `groq` | `groq` (Whisper) \| `elevenlabs` (Scribe) \| `openai` |
+| `sttModel` | `whisper-large-v3` | id del proveedor elegido: Groq con "whisper"; ElevenLabs `scribe_*` (no realtime); OpenAI `whisper-1` \| `gpt-4o(-mini)-transcribe`. Si no es de ese proveedor se usa su modelo por defecto (`scribe_v2`, `gpt-4o-transcribe`) |
 | `sttTemperature` | `0` | 0–1 |
-| `translateModel` | `openai/gpt-oss-120b` | id de chat de Groq |
+| `translateProvider` | `groq` | `groq` \| `openai` |
+| `translateModel` | `openai/gpt-oss-120b` | id de chat del proveedor elegido (OpenAI: `gpt-*`, `o1/o3/o4*` sin prefijo `org/`; por defecto `gpt-4.1`) |
 | `translateTemperature` | `0.2` | 0–1 |
 | `translateReasoningEffort` | `low` | `low`\|`medium`\|`high` (gpt-oss); también `none`\|`default` (Qwen3). Solo en modelos que lo admiten (ver `reasoningEfforts` del modelo); se ignora en el resto y se traduce entre escalas (Qwen3: low→none, medium/high→default) |
 | `memoryTurns` | `8` | 0–64 (ya existía) |
@@ -110,6 +112,12 @@ Ajustes planos nuevos (en `settings.json`, normalizados por el engine; valores f
 | `ttsSpeed` | `1` | 0.7–1.2 |
 | `ttsSpeakerBoost` | `true` | bool (solo si el modelo lo admite) |
 | `ttsTextNormalization` | `auto` | `auto`\|`on`\|`off` |
+
+Proveedores por etapa (2026-10-01): `providerKeys` admite `groq`, `elevenlabs` y `openai`. Para doblar solo hacen
+falta las de `sttProvider`, `translateProvider` y `elevenlabs` (TTS); si falta la del proveedor elegido,
+`session.start` responde `missing_key` nombrándolo. Cambiar de proveedor con la sesión en curso sustituye el
+cliente de esa etapa desde el siguiente turno (la memoria del traductor se conserva); si falta su key la etapa
+sigue con el proveedor anterior y se emite `warn` `{ kind: 'provider', message }`.
 
 Comandos nuevos:
 - `models.list` `{ refresh?: bool }` → `{ stt: [Model], translate: [Model], tts: [TtsModel], defaults, offline: bool, fetchedAt }`.
@@ -122,7 +130,14 @@ Comandos nuevos:
   - `Model.available` (`false` si el modelo guardado en ajustes ya no aparece en el catálogo en vivo: se añade igual para que la UI lo muestre) y `Model.source`.
   - `price`: STT `{ unit: 'hora de audio', usd }`; traducción `{ unit: '1M tokens de entrada', usd, usdOutput, outputUnit: '1M tokens de salida', source: 'live'|'table'|'estimate' }`;
     TTS `{ unit: '1k caracteres', usd }` (= 0.18 × `costMultiplier`).
-  - `reasoningEfforts`: gpt-oss `['low','medium','high']`, Qwen3 `['none','default']`, resto `[]`.
+  - `reasoningEfforts`: gpt-oss `['low','medium','high']`, Qwen3 `['none','default']`, OpenAI con razonamiento
+    (`gpt-5*`, `o1/o3/o4*`) `['low','medium','high']` (y se omite `temperature`), resto `[]`.
+  - Proveedores: `stt` y `translate` son las listas del proveedor elegido en ajustes; `sttByProvider: { groq, elevenlabs, openai }`
+    y `translateByProvider: { groq, openai }` traen las de todos (la UI cambia de proveedor sin otra consulta), cada `Model`
+    con `provider`. `providers: { stt: [ids], translate: [ids], labels, defaults: { stt: { [proveedor]: modelo }, translate } }`.
+    También se consulta `GET openai /v1/models` (STT = `whisper-1`/`gpt-4o-*-transcribe`; traducción = chat sin
+    audio/imagen/realtime); Scribe es una lista curada. `offline` y `errors` solo consideran los proveedores en uso;
+    `sources` incluye `openai`.
   - `TtsModel` también trae `supportsSpeed` y `supportsNormalizationOn` (Flash/Turbo no admiten `ttsTextNormalization: 'on'`; se envía `auto`).
     `stabilityPresets` = `[0, 0.5, 1]` en la familia `eleven_v3`. Se omiten los modelos con `requires_alpha_access`.
 - `tts.preview` `{ text?, voiceId? }` → `{ audioDataUrl: 'data:audio/wav;base64,…', chars, sampleRate, model }` — usa los ajustes TTS actuales (gasta caracteres).

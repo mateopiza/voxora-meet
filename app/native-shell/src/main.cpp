@@ -485,7 +485,7 @@ void sendCameraStats(const CameraCapture::Stats& s) {
       .set("delayMs", g_captureActive ? s.delayMs : 0).set("published", static_cast<double>(s.published))
       .set("sourceLost", s.sourceLost).set("vcamHostRunning", g_hostUp).set("sharedMemoryOk", s.sharedMemoryOk)
       .set("state", camStateName(reportedCamState())).set("mode", camModeName())
-      .set("outputWidth", s.outputWidth).set("outputHeight", s.outputHeight)
+      .set("outputWidth", s.outputWidth).set("outputHeight", s.outputHeight).set("outputFormat", s.nv12Output ? "nv12" : "rgba")
       .set("effectsMs", std::round(s.effectsMs * 100) / 100).set("effectsPeakMs", std::round(s.effectsPeakMs * 100) / 100)
       .set("recording", g_testRecording.recording());
   sendEvent("camera.stats", data);

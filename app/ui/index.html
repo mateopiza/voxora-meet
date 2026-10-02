@@ -133,7 +133,7 @@
     </div>
     <div class="banner banner--keys" id="keys-banner" role="status" hidden>
       <svg class="i"><use href="#i-key"/></svg>
-      <span class="banner__text"><strong>Conecta tus cuentas para doblar.</strong> <span id="keys-banner-text">Falta la clave de Groq y la de ElevenLabs.</span></span>
+      <span class="banner__text"><strong>Conecta tus cuentas para doblar.</strong> <span id="keys-banner-text">Faltan las claves de Groq, ElevenLabs y OpenAI.</span></span>
       <button class="btn btn--brand btn--sm" id="btn-keys-banner" type="button"><svg class="i"><use href="#i-key"/></svg>Conectar cuentas</button>
     </div>
   </div>
@@ -535,7 +535,7 @@
           <p class="cost-assume" id="cost-assume">Supone que hablas la mitad del tiempo de la reunión.</p>
         </div>
         <div class="models-summary__actions">
-          <span class="badge" data-tone="warn" id="models-offline" hidden title="No se pudo consultar Groq ni ElevenLabs: se muestra el catálogo guardado en la app"><svg class="i"><use href="#i-wifi-off"/></svg>Sin conexión · catálogo local</span>
+          <span class="badge" data-tone="warn" id="models-offline" hidden title="No se pudo consultar a algún proveedor: se muestra el catálogo guardado en la app"><svg class="i"><use href="#i-wifi-off"/></svg>Sin conexión · catálogo local</span>
           <button class="btn btn--glass btn--sm" id="btn-models-refresh" type="button"><svg class="i"><use href="#i-refresh"/></svg><span>Actualizar lista</span></button>
           <span class="models-summary__fetched" id="models-fetched"></span>
         </div>
@@ -546,13 +546,17 @@
           <div class="card__head-main">
             <span class="icon-tile"><svg class="i"><use href="#i-mic"/></svg></span>
             <div>
-              <p class="eyebrow eyebrow--cyan">Groq · Whisper</p>
+              <p class="eyebrow eyebrow--cyan" data-eyebrow="stt">Groq · Whisper</p>
               <h2 class="card__title">Transcripción</h2>
             </div>
           </div>
           <span class="badge apply-chip" data-tone="ok" data-card="stt" hidden></span>
         </header>
         <div class="card__body">
+          <div class="field">
+            <label class="field__label" for="sel-stt-provider">Proveedor</label>
+            <select class="select" id="sel-stt-provider"></select>
+          </div>
           <div class="field">
             <label class="field__label" for="sel-stt-model">Modelo</label>
             <select class="select" id="sel-stt-model"></select>
@@ -566,13 +570,17 @@
           <div class="card__head-main">
             <span class="icon-tile" data-tone="violet"><svg class="i"><use href="#i-languages"/></svg></span>
             <div>
-              <p class="eyebrow">Groq · LLM</p>
+              <p class="eyebrow" data-eyebrow="translate">Groq · LLM</p>
               <h2 class="card__title">Traducción</h2>
             </div>
           </div>
           <span class="badge apply-chip" data-tone="ok" data-card="translate" hidden></span>
         </header>
         <div class="card__body">
+          <div class="field">
+            <label class="field__label" for="sel-tr-provider">Proveedor</label>
+            <select class="select" id="sel-tr-provider"></select>
+          </div>
           <div class="field">
             <label class="field__label" for="sel-tr-model">Modelo</label>
             <select class="select" id="sel-tr-model"></select>
@@ -609,7 +617,7 @@
           <div class="card__head-main">
             <span class="icon-tile"><svg class="i"><use href="#i-mic"/></svg></span>
             <div>
-              <p class="eyebrow eyebrow--cyan">Groq · Whisper</p>
+              <p class="eyebrow eyebrow--cyan" data-eyebrow="stt">Groq · Whisper</p>
               <h2 class="card__title">Transcripción</h2>
             </div>
           </div>
@@ -630,7 +638,7 @@
               <h3 class="subsection__title" id="vocab-title"><svg class="i"><use href="#i-tag"/></svg>Vocabulario personalizado</h3>
               <span class="badge" data-tone="muted" id="vocab-count">0</span>
             </div>
-            <p class="note">Nombres propios, marcas y jerga para que Whisper los escriba bien.</p>
+            <p class="note">Nombres propios, marcas y jerga para que la transcripción los escriba bien.</p>
             <div class="chips scroll-box" id="vocab-chips" aria-live="polite"></div>
             <form class="row" id="vocab-form" autocomplete="off">
               <input class="input" id="inp-vocab" type="text" maxlength="80" placeholder="Ej.: VOXORA, Kubernetes, Bogotá" aria-label="Añadir término al vocabulario" spellcheck="false">
@@ -645,7 +653,7 @@
           <div class="card__head-main">
             <span class="icon-tile" data-tone="violet"><svg class="i"><use href="#i-languages"/></svg></span>
             <div>
-              <p class="eyebrow">Groq · LLM</p>
+              <p class="eyebrow" data-eyebrow="translate">Groq · LLM</p>
               <h2 class="card__title">Traducción</h2>
             </div>
           </div>
@@ -922,7 +930,7 @@
   </main>
 </div>
 
-<!-- ── Hoja «Cuentas» (claves de Groq y ElevenLabs), en ambos modos ─────── -->
+<!-- ── Hoja «Cuentas» (claves de Groq, ElevenLabs y OpenAI), en ambos modos ─ -->
 <dialog class="sheet" id="sheet-accounts" aria-labelledby="sheet-accounts-title">
   <div class="sheet__panel">
     <header class="sheet__head">
@@ -933,7 +941,7 @@
       <button class="btn btn--ghost btn--icon" type="button" data-close title="Cerrar" aria-label="Cerrar"><svg class="i"><use href="#i-x"/></svg></button>
     </header>
     <div class="sheet__body">
-      <p class="sheet__lead">VOXORA Meet usa tu cuenta de <strong>Groq</strong> para transcribir y traducir, y la de <strong>ElevenLabs</strong> para hablar con tu voz clonada. Pega una API key de cada una.</p>
+      <p class="sheet__lead">VOXORA Meet usa tu cuenta de <strong>ElevenLabs</strong> para hablar con tu voz clonada, y la de <strong>Groq</strong>, <strong>OpenAI</strong> o ElevenLabs para transcribir y traducir, según el proveedor que elijas en Modelos. Pega una API key de cada una.</p>
       <div class="keys" data-keys-host="sheet"></div>
       <p class="note"><svg class="i"><use href="#i-shield"/></svg> Se cifran en este equipo (DPAPI de Windows) y nunca se vuelven a mostrar.</p>
     </div>

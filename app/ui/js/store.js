@@ -11,7 +11,7 @@ export const state = {
   app: {},
   engine: { state: 'starting', message: '' },
   settings: null,               // settings.get del motor (normalizados)
-  keys: { groq: false, elevenlabs: false },
+  keys: { groq: false, elevenlabs: false, openai: false },
   devices: { received: false, cameras: [], mics: [], renderEndpoints: [], virtualMic: null, virtualCamera: null },
   session: { state: 'idle', startedAt: 0 },
   // Cámara virtual (evento nativo `camera`, también fuera de la sesión si cameraAlwaysOn).
@@ -48,7 +48,7 @@ let pendingPatch = {};
 let inflight = null;
 
 // Campos que el motor solo toma al iniciar la sesión. El resto se aplica en caliente: el retraso
-// al instante y los modelos (protocolo v3: modelo, temperatura, esfuerzo, memoria, ajustes de voz)
+// al instante y los modelos (protocolo v3: proveedor, modelo, temperatura, esfuerzo, memoria, ajustes de voz)
 // desde el siguiente turno.
 const RESTART_FIELDS = new Set(['sourceLanguage', 'targetLanguage', 'tone', 'styleInstruction', 'micDeviceId', 'virtualMicDevice', 'monitorDevice', 'maxVoxPerSession', 'warnAtVox']);
 export const needsRestart = { value: false, fields: new Set() };
@@ -142,7 +142,7 @@ export function cameraDelayMs() {
 export async function loadSettings() {
   const result = await engine('settings.get');
   state.settings = { ...result.settings, ...pendingPatch };
-  state.keys = { groq: false, elevenlabs: false, ...(result.providerKeys || {}) };
+  state.keys = { groq: false, elevenlabs: false, openai: false, ...(result.providerKeys || {}) };
   state.app.dataDir = result.dataDir || state.app.dataDir;
   notify('settings');
   notify('keys');

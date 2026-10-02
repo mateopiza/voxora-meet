@@ -16,14 +16,15 @@ VoxoraMeetVCamHost.exe ──MFCreateVirtualCamera──▶ FrameServer (svchost
 
 | Binario | Carpeta | Rol |
 |---|---|---|
-| `VoxoraMeetVCam.dll` | `native/vcam-source/` | DLL COM con el media source (`IMFMediaSource` + `IMFMediaSourceEx` + `IMFGetService` + `IKsControl` + `IMFSampleAllocatorControl`) y un `IMFMediaStream2` que produce NV12 y RGB32 a 1280x720 y 1920x1080 @ 30 fps. Lee frames RGBA del ring compartido; sin productor emite "VOXORA MEET — ESPERANDO VIDEO". |
+| `VoxoraMeetVCam.dll` | `native/vcam-source/` | DLL COM con el media source (`IMFMediaSource` + `IMFMediaSourceEx` + `IMFGetService` + `IKsControl` + `IMFSampleAllocatorControl`) y un `IMFMediaStream2` que produce NV12 y RGB32 a 1280x720 @ 30 fps. Lee frames NV12 (shell) o RGBA (FrameWriter, shell anterior) del ring compartido y entrega cada muestra al llegar el evento «frame listo»; sin productor emite "VOXORA MEET — ESPERANDO VIDEO". |
 | `VoxoraMeetVCamHost.exe` | `native/vcam-host/` | Registra la cámara (`MFCreateVirtualCamera`, tipo `SoftwareCameraSource`, `Lifetime_Session`, `Access_CurrentUser`), hace `Start` y se queda vivo leyendo comandos por stdin (`ping`, `status`, `stop`). También `--register-dll` / `--unregister-dll` (equivalente a regsvr32, requiere elevación) y `--check-registered`. |
 | `VoxoraMeetFrameWriter.exe` | `native/frame-writer/` | Productor: lee frames RGBA crudos por stdin (cabecera binaria de 16 bytes `{u32 width, u32 height, u64 timestampMs}` + píxeles) y los publica en la memoria compartida, señalando el evento. Evita un addon nativo en Node. Usa el productor común `native/common/frame_producer.h`, el MISMO que el shell (`VoxoraMeet.exe`). |
 | `VoxoraMeetCameraTest.exe` | `native/test-consumer/` | Consumidor de prueba E2E: enumera cámaras MF (`--list`), inspecciona la memoria compartida (`--probe`) o abre «VOXORA Meet Camera» con `IMFSourceReader` en NV12/RGB32 nativo y clasifica cada frame (patrón de prueba / imagen de espera / otro) en JSON por línea. |
 | `src/virtual-camera.mjs` | `src/` | `VirtualCamera` (ESM, Node ≥ 22, sin deps): `isSupported()`, `isRegistered()`, `register()`, `start()`, `writeFrame()`, `stop()`, eventos `status` / `log` / `error`. |
 
 Contrato binario compartido: `native/common/vcam_shared.h` (cabecera `{ magic, version, width, height,
-format, frameSeq, writeIndex, timestamp100ns, heartbeat }` + ring de 3 slots RGBA de hasta 1920x1080,
+format, frameSeq, writeIndex, timestamp100ns, heartbeat, consumerCaps }` + ring de 3 slots de hasta
+1920x1080 en RGBA8 o NV12 (`native/common/nv12.h`; NV12 solo si la DLL lo anuncia en `consumerCaps`),
 cada slot con seqlock `seqBegin/seqEnd`).
 
 ## Requisitos
@@ -86,8 +87,8 @@ await cam.stop();
 
 `writeFrame` aplica *backpressure*: si el stdin del writer aún no ha drenado, el frame se descarta
 (`cam.stats.dropped`) en vez de acumular latencia. Frames válidos: dimensiones pares, ≤ 1920x1080,
-`rgba.length === width*height*4`. Si el tamaño no coincide con el negociado por la app (720p/1080p), la
-DLL lo escala con letterbox. Sin frames durante 2 s la cámara vuelve a la pantalla de espera.
+`rgba.length === width*height*4`. Si el tamaño no coincide con el negociado por la app (720p), la
+DLL lo escala (bilineal) con letterbox. Sin frames durante 2 s la cámara vuelve a la pantalla de espera.
 
 Tests (sin binarios ni Windows, con `spawn`/`execFile` inyectados): `npm test --workspace windows-camera`.
 
@@ -96,7 +97,7 @@ Tests (sin binarios ni Windows, con `spawn`/`execFile` inyectados): `npm test --
 1. Con la DLL registrada, ejecute `VoxoraMeetVCamHost.exe` (o `cam.start()`); debe imprimir `READY`.
    La cámara existe mientras el host viva (`Lifetime_Session`).
 2. `chrome://media-internals` → pestaña **Video Capture**: debe listarse "VOXORA Meet Camera" con los
-   formatos 1280x720 / 1920x1080 @ 30 fps (NV12 y RGB32).
+   formatos 1280x720 @ 30 fps (NV12 y RGB32).
 3. En Meet: Configuración → Vídeo → seleccionar "VOXORA Meet Camera". Sin productor se ve la pantalla
    "VOXORA MEET — ESPERANDO VIDEO" con la barra violeta animada; con `writeFrame` se ven los frames.
 4. Alternativas rápidas: la app **Cámara** de Windows, `Get-CimInstance Win32_PnPEntity | ? Name -like '*VOXORA*'`
@@ -144,8 +145,8 @@ requisitos.
 - Registro en HKLM: **una vez, con UAC**. Sin registro el host termina con código 5.
 - La DLL no expone propiedades de cámara (`IKsControl` responde `ERROR_SET_NOT_FOUND`); las apps que
   requieren controles (zoom/exposición) simplemente no los muestran.
-- Sin D3D: los frames se producen en memoria de sistema y se convierten RGBA→NV12 en CPU (sin SIMD).
-  1080p @ 30 fps cuesta unos pocos ms por frame en un núcleo; suficiente para Meet.
+- Sin D3D: los frames se producen en memoria de sistema. Con el shell (NV12) la DLL solo copia; con un
+  productor RGBA convierte RGBA→NV12 en CPU (sin SIMD), unos pocos ms por frame 720p en un núcleo.
 - Chrome cachea la lista de dispositivos: si la cámara se crea con Meet ya abierto puede hacer falta
   recargar la pestaña para que aparezca.
 - Procesos con integridad *AppContainer* (apps UWP) ven la cámara pero, si además fueran productores,

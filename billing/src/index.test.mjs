@@ -13,6 +13,8 @@ import {
   createPricing,
   pricingFor,
   sttPriceFor,
+  sttProviderOf,
+  chatProviderOf,
   chatPriceFor,
   ttsCostMultiplierFor,
   reasoningTokensPerTurn,
@@ -271,4 +273,24 @@ test("SessionMeter sin tope nunca emite limit y reporta remaining infinito", () 
   assert.equal(limited, false);
   assert.equal(meter.remainingVox, Infinity);
   assert.equal(meter.estimateRemainingMinutes(), null);
+});
+
+test("proveedores por etapa: precios de Scribe y OpenAI, sin mínimo de 10 s fuera de Groq", () => {
+  assert.equal(sttPriceFor("scribe_v2").usdPerHour, 0.4);
+  assert.equal(sttPriceFor("scribe_v9").usdPerHour, 0.4, "Scribe desconocido: no se asume el precio de Groq");
+  assert.equal(sttPriceFor("gpt-4o-mini-transcribe").usdPerHour, 0.18);
+  assert.deepEqual([sttProviderOf("scribe_v2"), sttProviderOf("whisper-1"), sttProviderOf("whisper-large-v3")], ["elevenlabs", "openai", "groq"]);
+  assert.deepEqual([chatProviderOf("gpt-4.1"), chatProviderOf("o4-mini"), chatProviderOf("openai/gpt-oss-120b"), chatProviderOf("llama-3.3-70b-versatile")], ["openai", "openai", "groq", "groq"]);
+
+  const gpt41 = chatPriceFor("gpt-4.1-2025-04-14");
+  assert.deepEqual([gpt41.input, gpt41.output, gpt41.known], [2, 8, true]);
+  assert.deepEqual([chatPriceFor("gpt-9").input, chatPriceFor("gpt-9").known], [2.5, false]);
+  assert.equal(chatPriceFor("gpt-oss-120b").input, 0.15, "los ids de Groq siguen resolviendo");
+
+  const table = pricingFor({ sttModel: "scribe_v2", translateModel: "gpt-4.1" });
+  assert.deepEqual([table.stt.provider, table.stt.minBillableMs, table.translate.provider], ["elevenlabs", 0, "openai"]);
+  assert.equal(pricingFor().stt.minBillableMs, 10_000);
+  // 2 s de Scribe se cobran como 2 s (en Groq serían 10 s).
+  const usd = estimateTurnUsd({ audioMs: 2000 }, table);
+  assert.ok(Math.abs(usd.stt - (2000 / 3_600_000) * 0.4) < 1e-12);
 });

@@ -36,6 +36,7 @@
 #include <thread>
 #include <vector>
 
+#include "../../../windows-camera/native/common/nv12.h"
 #include "../../../windows-camera/native/common/vcam_shared.h"
 #include "test_recording.h"
 #include "video_effects.h"
@@ -77,7 +78,8 @@ class VcamReader {
     view_ = MapViewOfFile(handle_, FILE_MAP_READ, 0, 0, static_cast<SIZE_T>(vcam::kMappingSize));
     return view_ != nullptr;
   }
-  // Copia el último frame completo (RGBA). false si no hay frame nuevo desde `lastSeq` o no es legible.
+  // Copia el último frame completo (RGBA; si el shell publica NV12 se convierte). false si no hay frame
+  // nuevo desde `lastSeq` o no es legible.
   bool read(std::vector<uint8_t>& rgba, uint32_t& w, uint32_t& h, uint32_t& lastSeq) {
     if (!view_) return false;
     const auto* header = static_cast<const volatile vcam::SharedHeader*>(view_);
@@ -88,21 +90,34 @@ class VcamReader {
     auto* slot = vcam::slotAt(view_, index);
     const uint32_t begin = slot->seqBegin;
     MemoryBarrier();
-    const uint32_t sw = slot->width, sh = slot->height;
+    const uint32_t sw = slot->width, sh = slot->height, format = slot->format;
     if (sw < 2 || sh < 2 || sw > vcam::kMaxWidth || sh > vcam::kMaxHeight) return false;
-    rgba.resize(static_cast<size_t>(sw) * sh * 4);
-    std::memcpy(rgba.data(), vcam::slotPixels(slot), rgba.size());
+    const bool nv12 = format == vcam::PixelFormat_NV12;
+    if (!nv12 && format != vcam::PixelFormat_RGBA8) return false;
+    raw_.resize(nv12 ? vcam::nv12Bytes(sw, sh) : static_cast<size_t>(sw) * sh * 4);
+    std::memcpy(raw_.data(), vcam::slotPixels(slot), raw_.size());
     MemoryBarrier();
     if (slot->seqEnd != begin || slot->seqBegin != begin) return false;  // se escribió mientras copiábamos
+    if (nv12) {
+      rgba.resize(static_cast<size_t>(sw) * sh * 4);
+      vcam::nv12ToRgbaRows<false>(raw_.data(), sw, raw_.data() + static_cast<size_t>(sw) * sh, sw, sw, 0, sh, rgba.data(),
+                                  static_cast<ptrdiff_t>(sw) * 4);
+    } else {
+      rgba.swap(raw_);
+    }
     w = sw;
     h = sh;
     lastSeq = seq;
+    format_ = format;
     return true;
   }
+  uint32_t lastFormat() const { return format_; }
 
  private:
   HANDLE handle_ = nullptr;
   void* view_ = nullptr;
+  std::vector<uint8_t> raw_;
+  uint32_t format_ = 0;
 };
 
 // RGBA → BGRX (formato de entrada del renderizador, como el RGB32 de Media Foundation).
@@ -223,6 +238,44 @@ int cmdBench() {
     const uint8_t* lastRow = src.data() + static_cast<size_t>(W) * 4 * (H - 1);
     r.render(lastRow, -static_cast<ptrdiff_t>(W) * 4, W, H, dst.data(), W, H);
     std::printf("{\"bench\":\"pitch-negativo\",\"ok\":true}\n");
+  }
+  // Salida NV12 (lo que va al ring y a la cámara virtual): coste por frame y error de ida y vuelta.
+  {
+    const std::vector<uint8_t> src = synthetic(W, H);
+    std::vector<uint8_t> nv12(vcam::nv12Bytes(W, H)), back(static_cast<size_t>(W) * H * 4);
+    for (const Case& c : cases()) {
+      if (std::strcmp(c.name, "identidad") != 0 && std::strcmp(c.name, "color") != 0 && std::strcmp(c.name, "todo") != 0) continue;
+      VideoEffectsRenderer r;
+      r.setParams(c.p);
+      r.renderNv12(src.data(), W * 4, W, H, nv12.data(), W, H);
+      const int iters = 150;
+      double worst = 0;
+      const double t0 = nowMs();
+      for (int i = 0; i < iters; i++) {
+        const double a = nowMs();
+        r.renderNv12(src.data(), W * 4, W, H, nv12.data(), W, H);
+        worst = std::max(worst, nowMs() - a);
+      }
+      std::printf("{\"bench\":\"nv12-%s\",\"source\":\"1280x720\",\"avgMs\":%.3f,\"maxMs\":%.3f}\n", c.name, (nowMs() - t0) / iters, worst);
+    }
+    // Ida y vuelta RGBA → NV12 → RGBA sobre la luma (la croma va a 2x2 a propósito).
+    VideoEffectsRenderer r;
+    r.render(src.data(), W * 4, W, H, dst.data(), W, H);
+    r.renderNv12(src.data(), W * 4, W, H, nv12.data(), W, H);
+    vcam::nv12ToRgbaRows<false>(nv12.data(), W, nv12.data() + static_cast<size_t>(W) * H, W, W, 0, H, back.data(), W * 4);
+    int maxLumaErr = 0;
+    for (size_t i = 0; i + 3 < dst.size(); i += 4) {
+      const int ya = (77 * dst[i] + 150 * dst[i + 1] + 29 * dst[i + 2]) >> 8;
+      const int yb = (77 * back[i] + 150 * back[i + 1] + 29 * back[i + 2]) >> 8;
+      maxLumaErr = std::max(maxLumaErr, std::abs(ya - yb));
+    }
+    // Escalado de la DLL (720p → 1080p, y 4:3 con barras) sin salirse de los buffers.
+    std::vector<uint8_t> big(vcam::nv12Bytes(1920, 1080)), box(vcam::nv12Bytes(640, 480));
+    vcam::scaleNv12Letterbox(nv12.data(), W, H, big.data(), 1920, 1080);
+    vcam::scaleNv12Letterbox(nv12.data(), W, H, box.data(), 640, 480);
+    const bool barsOk = box[0] == 16 && box[static_cast<size_t>(640) * 240 + 320] != 16;
+    std::printf("{\"bench\":\"nv12-ida-vuelta\",\"maxLumaErr\":%d,\"ok\":%s,\"letterboxOk\":%s}\n", maxLumaErr, maxLumaErr <= 3 ? "true" : "false",
+                barsOk ? "true" : "false");
   }
   return 0;
 }

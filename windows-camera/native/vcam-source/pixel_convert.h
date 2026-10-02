@@ -1,5 +1,6 @@
-// Conversión de píxeles propia (sin SIMD): RGBA → NV12 (BT.601, rango limitado) y RGBA → BGRX (RGB32 de MF),
-// más escalado nearest-neighbor con letterbox para adaptar el frame del productor a la resolución negociada.
+// Conversión de píxeles propia (sin SIMD): RGBA/NV12 → NV12 (BT.601, rango limitado) y → BGRX (RGB32 de MF),
+// más escalado bilineal con letterbox para adaptar el frame del productor a la resolución negociada. Los
+// coeficientes y el escalado de NV12 son los de common/nv12.h (los mismos que usa el shell).
 #pragma once
 
 #include <cstddef>
@@ -19,8 +20,11 @@ void rgbaToBgrx(const uint8_t* rgba, uint32_t width, uint32_t height, uint8_t* d
 // Copia NV12 (empaquetado, pitch = width) a un destino con pitch arbitrario.
 void copyNv12(const uint8_t* src, uint32_t width, uint32_t height, uint8_t* dst, int32_t pitch);
 
+// NV12 compacto → BGRX de 32 bits (mismo convenio de `pitch` que rgbaToBgrx).
+void nv12ToBgrx(const uint8_t* nv12, uint32_t width, uint32_t height, uint8_t* dst, int32_t pitch);
+
 // Escala `src` (RGBA srcW x srcH) al lienzo `dst` (RGBA dstW x dstH) preservando la relación de aspecto
-// (barras negras). Si las dimensiones coinciden hace una copia directa.
+// (barras negras), con filtro bilineal. Si las dimensiones coinciden hace una copia directa.
 void scaleRgbaLetterbox(const uint8_t* src, uint32_t srcW, uint32_t srcH, uint8_t* dst, uint32_t dstW,
                         uint32_t dstH);
 

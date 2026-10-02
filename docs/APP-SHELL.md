@@ -116,6 +116,7 @@ Meet: `starting`/`error` con `hostRunning: false` = el host de la cámara virtua
 estado de la webcam; `mode: live` = en vivo sin retraso, `dubbing` = retrasado `delayMs`),
 `camera.stats` (cada 1 s mientras la cámara virtual está activa: resolución, fps, frames en ring,
 `delayMs`, publicados, `sourceLost`, `vcamHostRunning`, `sharedMemoryOk`, `state`, `mode`,
+`outputFormat` (`nv12` con la DLL actual, `rgba` con una anterior),
 `effectsMs` / `effectsPeakMs` = ms por frame de la imagen de la cámara (media y pico de la última
 ventana), `recording`),
 `device-lost` / `device-restored` `{ kind: 'mic' }`, `record.level`, `record.stopped`,
@@ -366,7 +367,8 @@ video con un ring de frames y escribe en la memoria compartida de la cámara vir
 `CameraCapture::captureLoop` procesa cada frame de la webcam **antes** del ring de retraso y de la
 cámara virtual, en una sola pasada por píxel del buffer de Media Foundation (BGRX, leído con
 `IMF2DBuffer::Lock2D`: primera fila visible + pitch real, lo que corrige la orientación de las webcams
-bottom-up) al lienzo RGBA 1280×720:
+bottom-up) al lienzo 1280×720, que pasa a NV12 (BT.601 limitado, por franjas de filas en paralelo) para el
+ring y la cámara virtual:
 
 - **Orientación**: espejo, volteo, rotación 0/90/180/270 (horario).
 - **Encuadre**: 16:9 = recorte «cover» que llena el lienzo; 9:16 = recorte vertical centrado en el

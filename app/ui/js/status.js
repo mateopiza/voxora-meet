@@ -2,7 +2,7 @@
 // con explicación de qué falta y cómo resolverlo, contador VOX, banner del
 // motor y chip de sesión junto a las pestañas.
 
-import { openAccounts } from './accounts.js';
+import { joinNames, missingKeys, openAccounts, PROVIDER_LABELS } from './accounts.js';
 import { native } from './bridge.js';
 import { $, $$, fmtClock, fmtInt, fmtSeconds1, h, setBusy, setIcon, toastError } from './dom.js';
 import { setMode } from './mode.js';
@@ -49,7 +49,7 @@ const refreshDevices = () => native('native.devices.refresh').catch(toastError);
 
 function renderEngine() {
   const e = state.engine;
-  const missing = ['groq', 'elevenlabs'].filter((k) => !state.keys[k]);
+  const missing = missingKeys();
   if (e.state === 'starting') {
     pill(els.engine, 'wait', 'Iniciando');
     popover(els.popEngine, 'Iniciando el motor', h('p', {}, 'El motor de doblaje (transcripción, traducción y voz) está arrancando. Tarda unos segundos.'));
@@ -57,12 +57,12 @@ function renderEngine() {
     if (missing.length) {
       pill(els.engine, 'warn', 'Faltan claves');
       popover(els.popEngine, 'Motor listo, faltan claves',
-        h('p', {}, `Para doblar necesitas la API key de ${missing.map((k) => (k === 'groq' ? 'Groq' : 'ElevenLabs')).join(' y ')}.`),
+        h('p', {}, `Para doblar necesitas la API key de ${joinNames(missing)}.`),
         h('div', { class: 'row' }, button('Conectar cuentas', openAccounts, 'btn--brand')));
     } else {
       pill(els.engine, 'ok', 'Listo');
       popover(els.popEngine, 'Motor en marcha',
-        h('p', {}, 'Groq transcribe y traduce cada frase; ElevenLabs la dice con tu voz clonada.'));
+        h('p', {}, `${PROVIDER_LABELS[state.settings?.sttProvider] || 'Groq'} transcribe cada frase, ${PROVIDER_LABELS[state.settings?.translateProvider] || 'Groq'} la traduce y ElevenLabs la dice con tu voz clonada.`));
     }
   } else {
     pill(els.engine, 'bad', 'Detenido');
@@ -210,7 +210,7 @@ function renderSessionChip() {
 
 function renderDots() {
   // Punto en «Reunión» si falta algo para empezar (voz o cuentas) y se está en otra pestaña.
-  const missing = !state.settings?.voiceId || !(state.keys.groq && state.keys.elevenlabs);
+  const missing = !state.settings?.voiceId || missingKeys().length > 0;
   els.dotMeeting.hidden = !missing || state.engine.state !== 'ready' || state.activeTab === 'meeting';
 }
 

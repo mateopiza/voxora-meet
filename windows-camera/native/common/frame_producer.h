@@ -16,6 +16,7 @@
 #include <cstdint>
 #include <cstring>
 
+#include "nv12.h"
 #include "shared_memory.h"
 
 namespace voxora::vcam {
@@ -54,45 +55,23 @@ class FrameProducer {
   DWORD lastError() const { return lastError_; }
   uint32_t opens() const { return opens_; }  // veces que se (re)abrió el mapping
 
+  // La DLL que lee el mapping acepta NV12 (la anterior solo RGBA8 y deja consumerCaps a 0).
+  bool consumerAcceptsNv12() const {
+    return mapping_.valid() && (mapping_.header()->consumerCaps & kConsumerCapNV12) != 0;
+  }
+
   // Publica un frame RGBA8 top-down. `slotTimestamp100ns`: instante de captura (diagnóstico de la DLL).
   // false si no hay mapping o las dimensiones no caben (2..1920 x 2..1080; la DLL escala a la
   // resolución negociada, así que no hace falta que sean pares).
   bool publish(const uint8_t* rgba, uint32_t width, uint32_t height, int64_t slotTimestamp100ns, int64_t now100ns) {
-    if (!mapping_.valid() || !rgba) return false;
-    if (width < 2 || height < 2 || width > kMaxWidth || height > kMaxHeight) return false;
-    SharedHeader* header = mapping_.header();
-    if (header->magic != kMagic) return false;
-    const uint32_t index = (header->writeIndex + 1) % kSlotCount;
-    SlotHeader* slot = slotAt(mapping_.view, index);
+    return publishFrame(rgba, size_t(width) * height * 4, PixelFormat_RGBA8, width, height, slotTimestamp100ns, now100ns);
+  }
 
-    // Seqlock por slot: seqBegin = seqEnd + 1 (impar respecto al último valor completo) mientras se
-    // escribe. Derivarlo del propio slot (y no de un contador del proceso) evita repetir un valor viejo
-    // si el productor se reinicia.
-    uint32_t seq = slot->seqEnd + 1;
-    if (seq == 0) seq = 1;
-    slot->seqBegin = seq;
-    MemoryBarrier();
-    slot->width = width;
-    slot->height = height;
-    slot->format = PixelFormat_RGBA8;
-    slot->timestamp100ns = slotTimestamp100ns;
-    std::memcpy(slotPixels(slot), rgba, size_t(width) * height * 4);
-    MemoryBarrier();
-    slot->seqEnd = seq;
-    MemoryBarrier();
-
-    header->width = width;
-    header->height = height;
-    header->format = PixelFormat_RGBA8;
-    header->timestamp100ns = now100ns;
-    header->producerHeartbeat100ns = now100ns;
-    header->writeIndex = index;
-    MemoryBarrier();
-    header->frameSeq = header->frameSeq + 1;
-    MemoryBarrier();
-    if (event_) SetEvent(event_);
-    ++published_;
-    return true;
+  // Publica un frame NV12 compacto (nv12.h). false si la DLL no lo acepta (consumerAcceptsNv12) o si el
+  // tamaño no es par: el llamador publica entonces RGBA8.
+  bool publishNv12(const uint8_t* nv12, uint32_t width, uint32_t height, int64_t slotTimestamp100ns, int64_t now100ns) {
+    if (((width | height) & 1) != 0 || !consumerAcceptsNv12()) return false;
+    return publishFrame(nv12, nv12Bytes(width, height), PixelFormat_NV12, width, height, slotTimestamp100ns, now100ns);
   }
 
   // Latido sin frame nuevo: la DLL sigue mostrando el último frame publicado.
@@ -120,6 +99,45 @@ class FrameProducer {
   }
 
  private:
+  bool publishFrame(const uint8_t* pixels, size_t bytes, PixelFormat format, uint32_t width, uint32_t height,
+                    int64_t slotTimestamp100ns, int64_t now100ns) {
+    if (!mapping_.valid() || !pixels) return false;
+    if (width < 2 || height < 2 || width > kMaxWidth || height > kMaxHeight || bytes > kMaxFrameBytes) return false;
+    SharedHeader* header = mapping_.header();
+    if (header->magic != kMagic) return false;
+    const uint32_t index = (header->writeIndex + 1) % kSlotCount;
+    SlotHeader* slot = slotAt(mapping_.view, index);
+
+    // Seqlock por slot: seqBegin = seqEnd + 1 (impar respecto al último valor completo) mientras se
+    // escribe. Derivarlo del propio slot (y no de un contador del proceso) evita repetir un valor viejo
+    // si el productor se reinicia.
+    uint32_t seq = slot->seqEnd + 1;
+    if (seq == 0) seq = 1;
+    slot->seqBegin = seq;
+    MemoryBarrier();
+    slot->width = width;
+    slot->height = height;
+    slot->format = format;
+    slot->timestamp100ns = slotTimestamp100ns;
+    std::memcpy(slotPixels(slot), pixels, bytes);
+    MemoryBarrier();
+    slot->seqEnd = seq;
+    MemoryBarrier();
+
+    header->width = width;
+    header->height = height;
+    header->format = format;
+    header->timestamp100ns = now100ns;
+    header->producerHeartbeat100ns = now100ns;
+    header->writeIndex = index;
+    MemoryBarrier();
+    header->frameSeq = header->frameSeq + 1;
+    MemoryBarrier();
+    if (event_) SetEvent(event_);  // la DLL entrega la muestra en cuanto llega el aviso (media_stream.cpp)
+    ++published_;
+    return true;
+  }
+
   FramesMapping mapping_;
   HANDLE event_ = nullptr;
   int64_t lastAttempt_ = 0;

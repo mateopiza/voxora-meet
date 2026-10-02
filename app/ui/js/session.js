@@ -1,6 +1,6 @@
 // Ciclo de vida de la sesión de doblaje (iniciar / detener) y comprobaciones previas.
 
-import { openAccounts } from './accounts.js';
+import { joinNames, missingKeys as missingKeyNames, openAccounts, requiredProviders } from './accounts.js';
 import { engine, native } from './bridge.js';
 import { toast, toastError } from './dom.js';
 import { reveal } from './nav.js';
@@ -33,8 +33,8 @@ export function preflight() {
   const s = state.settings || {};
   const vmic = state.devices.virtualMic;
   const engineOk = state.engine.state === 'ready';
-  const keysOk = Boolean(state.keys.groq && state.keys.elevenlabs);
-  const missingKeys = ['groq', 'elevenlabs'].filter((k) => !state.keys[k]).map((k) => (k === 'groq' ? 'Groq' : 'ElevenLabs'));
+  const missingKeys = missingKeyNames();
+  const keysOk = missingKeys.length === 0;
   return [
     {
       id: 'engine', blocking: true, ok: engineOk,
@@ -44,8 +44,8 @@ export function preflight() {
     },
     {
       id: 'keys', blocking: true, ok: keysOk, short: 'cuentas conectadas',
-      label: keysOk ? 'Cuentas de Groq y ElevenLabs conectadas' : `Falta la clave de ${missingKeys.join(' y ')}`,
-      detail: `Conecta tu cuenta de ${missingKeys.join(' y ')} (API key) para poder doblar.`,
+      label: keysOk ? `Cuentas de ${joinNames(requiredProviders().map((p) => p.name))} conectadas` : `Falta la clave de ${joinNames(missingKeys)}`,
+      detail: `Conecta tu cuenta de ${joinNames(missingKeys)} (API key) para poder doblar.`,
       action: { label: 'Conectar', run: openAccounts },
     },
     {

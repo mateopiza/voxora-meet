@@ -1,6 +1,6 @@
-// Modelos (protocolo v3, docs/CONTRACTS.md): elección y ajuste de los modelos de transcripción (Groq
-// Whisper), traducción (LLM de Groq) y voz (ElevenLabs), vocabulario del STT, glosario del traductor,
-// prueba de voz y costo estimado en vivo.
+// Modelos (protocolo v3, docs/CONTRACTS.md): elección y ajuste del proveedor y el modelo de transcripción
+// (Groq Whisper, ElevenLabs Scribe u OpenAI), traducción (LLM de Groq u OpenAI) y voz (ElevenLabs),
+// vocabulario del STT, glosario del traductor, prueba de voz y costo estimado en vivo.
 //   - Simple: nada (valores guardados o recomendados).
 //   - Avanzado › Modelos: costo estimado y el modelo de cada etapa (ficha, precio, disponibilidad).
 //   - Avanzado › Traducción: temperaturas, razonamiento, memoria, tono, estilo, vocabulario y glosario.
@@ -9,7 +9,7 @@
 // Los ajustes se guardan con settings.set (debounce del store) y el motor los aplica desde el
 // siguiente turno aunque haya una sesión en curso. Tono y estilo se siguen tomando al iniciar.
 
-import { openAccounts } from './accounts.js';
+import { openAccounts, PROVIDER_LABELS } from './accounts.js';
 import { engine } from './bridge.js';
 import { $, bindSegmented, debounce, fillSelect, fmtDec, fmtInt, fmtUsd, h, icon, setBusy, setIcon, setSegmented, toast, toastError } from './dom.js';
 import { reveal } from './nav.js';
@@ -18,8 +18,10 @@ import { flushSettings, needsRestart, patchSettings, state, subscribe } from './
 
 /** Defaults del contrato v3 (si el motor aún no devolvió settings ni `defaults`). */
 export const MODEL_DEFAULTS = Object.freeze({
+  sttProvider: 'groq',
   sttModel: 'whisper-large-v3',
   sttTemperature: 0,
+  translateProvider: 'groq',
   translateModel: 'openai/gpt-oss-120b',
   translateTemperature: 0.2,
   translateReasoningEffort: 'low',
@@ -37,6 +39,7 @@ const VOICE_KEYS = ['ttsStability', 'ttsSimilarityBoost', 'ttsStyle', 'ttsSpeed'
 // Tarjeta (data-card de su .apply-chip) donde vive cada ajuste: Modelos (stt / translate / tts),
 // Traducción (stt-tune / tr-tune / glossary) y Voz (tts-char / tts-read).
 const CARD_OF = {
+  sttProvider: 'stt', translateProvider: 'translate',
   sttModel: 'stt', sttTemperature: 'stt-tune', vocabulary: 'stt-tune',
   translateModel: 'translate', translateTemperature: 'tr-tune', translateReasoningEffort: 'tr-tune',
   memoryTurns: 'tr-tune', tone: 'tr-tune', styleInstruction: 'tr-tune', glossary: 'glossary',
@@ -67,7 +70,18 @@ function current(key) {
   return MODEL_DEFAULTS[key];
 }
 
-const listOf = (kind) => (Array.isArray(models.catalog?.[kind]) ? models.catalog[kind] : []);
+// Proveedor por etapa (la voz es siempre ElevenLabs). El catálogo trae las listas de todos los
+// proveedores (`sttByProvider`, `translateByProvider`): cambiar de proveedor no espera al motor.
+const PROVIDER_OF = { stt: 'sttProvider', translate: 'translateProvider' };
+const PROVIDER_FALLBACK = { stt: ['groq', 'elevenlabs', 'openai'], translate: ['groq', 'openai'] };
+const STAGE_KIND = { stt: { groq: 'Whisper', elevenlabs: 'Scribe', openai: 'Transcripción' }, translate: {} };
+const providerLabel = (id) => models.catalog?.providers?.labels?.[id] || PROVIDER_LABELS[id] || id;
+
+function listOf(kind) {
+  const byProvider = PROVIDER_OF[kind] && models.catalog?.[`${kind}ByProvider`];
+  const list = byProvider ? byProvider[current(PROVIDER_OF[kind])] : models.catalog?.[kind];
+  return Array.isArray(list) ? list : [];
+}
 const findModel = (kind, id) => listOf(kind).find((m) => m.id === id) || null;
 
 function patchModel(patch) {
@@ -100,6 +114,32 @@ function priceText(price) {
 const badge = (tone, ...content) => h('span', { class: 'badge', dataset: { tone } }, ...content);
 
 const SETTING_OF = { stt: 'sttModel', translate: 'translateModel', tts: 'ttsModel' };
+
+function providerOptions(kind) {
+  const ids = models.catalog?.providers?.[kind] || PROVIDER_FALLBACK[kind];
+  return ids.map((id) => ({ value: id, label: `${providerLabel(id)}${state.keys[id] ? '' : ' (falta la key)'}` }));
+}
+
+/** Cambia el proveedor de una etapa y, con él, el modelo: el recomendado de su lista. */
+function changeProvider(kind, provider) {
+  const list = models.catalog?.[`${kind}ByProvider`]?.[provider] || [];
+  const pick = list.find((m) => m.recommended && m.available !== false) || list.find((m) => m.available !== false);
+  // Sin lista, el motor pone el modelo por defecto del proveedor al guardar.
+  const model = pick?.id || models.catalog?.providers?.defaults?.[kind]?.[provider];
+  patchModel({ [PROVIDER_OF[kind]]: provider, ...(model ? { [SETTING_OF[kind]]: model } : {}) });
+  if (!state.keys[provider]) {
+    toast({ kind: 'warn', title: `Falta la key de ${providerLabel(provider)}`, message: 'Conecta esa cuenta para poder usar este proveedor.', action: { label: 'Conectar', run: openAccounts } });
+  }
+}
+
+function renderProviders() {
+  for (const [kind, select] of [['stt', els.sttProvider], ['translate', els.trProvider]]) {
+    const provider = String(current(PROVIDER_OF[kind]));
+    fillSelect(select, providerOptions(kind), provider);
+    const text = [providerLabel(provider), STAGE_KIND[kind][provider] || (kind === 'translate' ? 'LLM' : '')].filter(Boolean).join(' · ');
+    for (const el of els.eyebrows[kind]) el.textContent = text;
+  }
+}
 
 /** Aviso para un modelo guardado que ya no está en la cuenta: sugiere el recomendado. */
 function unavailableNote(kind, m) {
@@ -225,6 +265,7 @@ function renderTts(m) {
 }
 
 function renderModels() {
+  renderProviders();
   const stt = String(current('sttModel'));
   const tr = String(current('translateModel'));
   const tts = String(current('ttsModel'));
@@ -267,7 +308,7 @@ function renderNote() {
   els.noteText.textContent = text;
   els.note.dataset.live = String(live);
   els.offline.hidden = !models.catalog?.offline;
-  els.offline.title = errors.length ? errors.join(' ') : 'No se pudo consultar a Groq o ElevenLabs: se muestra el catálogo de referencia de la app.';
+  els.offline.title = errors.length ? errors.join(' ') : 'No se pudo consultar a algún proveedor: se muestra el catálogo de referencia de la app.';
   els.fetched.textContent = fetchedLabel(models.catalog?.fetchedAt);
   els.trRestart.hidden = !(running && (needsRestart.fields.has('tone') || needsRestart.fields.has('styleInstruction')));
 }
@@ -296,7 +337,7 @@ function renderCost(r) {
   const bv = r.breakdownVox || {};
   const values = parts.map((p) => partUsd(b[p]));
   const total = values.reduce((a, c) => a + c, 0);
-  // breakdown = USD/h de proveedor sin margen (Groq + ElevenLabs); breakdownVox = VOX/h que se cobran.
+  // breakdown = USD/h de proveedor sin margen; breakdownVox = VOX/h que se cobran.
   parts.forEach((p, i) => {
     els.bar.querySelector(`[data-part="${p}"]`).style.flexGrow = String(total > 0 ? values[i] : 1);
     const li = els.legend.querySelector(`[data-part="${p}"]`);
@@ -639,8 +680,8 @@ export function initModels() {
     refresh: $('#btn-models-refresh'), costTiles: $('#cost-tiles'),
     voxMin: $('#cost-voxmin'), voxH: $('#cost-voxh'), usdH: $('#cost-usdh'),
     bar: $('#cost-bar'), legend: $('#cost-legend'), assume: $('#cost-assume'),
-    sttModel: $('#sel-stt-model'), sttInfo: $('#stt-info'),
-    trModel: $('#sel-tr-model'), trInfo: $('#tr-info'), effortField: $('#field-tr-effort'), effortSeg: $('#seg-tr-effort'),
+    sttProvider: $('#sel-stt-provider'), sttModel: $('#sel-stt-model'), sttInfo: $('#stt-info'),
+    trProvider: $('#sel-tr-provider'), trModel: $('#sel-tr-model'), trInfo: $('#tr-info'), effortField: $('#field-tr-effort'), effortSeg: $('#seg-tr-effort'),
     tone: $('#seg-tone'), style: $('#inp-style'), styleCounter: $('#style-counter'), trRestart: $('#tr-restart-hint'),
     ttsModel: $('#sel-tts-model'), ttsInfo: $('#tts-info'),
     stabilityField: $('#field-tts-stability'), presetsField: $('#field-tts-presets'), presetsSeg: $('#seg-tts-presets'),
@@ -654,6 +695,7 @@ export function initModels() {
   });
   els.vocabAdd = els.vocabForm.querySelector('button[type="submit"]');
   els.glossAdd = els.glossForm.querySelector('button[type="submit"]');
+  els.eyebrows = { stt: Array.from(document.querySelectorAll('[data-eyebrow="stt"]')), translate: Array.from(document.querySelectorAll('[data-eyebrow="translate"]')) };
   els.chips = Object.fromEntries(Array.from(document.querySelectorAll('.apply-chip')).map((c) => [c.dataset.card, c]));
 
   const two = (v) => fmtDec(v, 2);
@@ -665,6 +707,8 @@ export function initModels() {
   bindRange($('#rng-tts-style'), $('#tts-style-value'), 'ttsStyle', two);
   bindRange($('#rng-tts-speed'), $('#tts-speed-value'), 'ttsSpeed', (v) => `${fmtDec(v, 2)}×`);
 
+  els.sttProvider.addEventListener('change', () => changeProvider('stt', els.sttProvider.value));
+  els.trProvider.addEventListener('change', () => changeProvider('translate', els.trProvider.value));
   els.sttModel.addEventListener('change', () => patchModel({ sttModel: els.sttModel.value }));
   els.trModel.addEventListener('change', () => patchModel({ translateModel: els.trModel.value }));
   els.ttsModel.addEventListener('change', () => patchModel({ ttsModel: els.ttsModel.value }));
@@ -706,9 +750,15 @@ export function initModels() {
     if (state.engine.state === 'ready' && !models.loaded && !models.loading) loadModels();
     renderNote();
   });
+  let keysSig = JSON.stringify(state.keys);
   subscribe('keys', () => {
-    // Con una key nueva el catálogo pasa de «de referencia» a «en vivo».
-    if (models.loaded && models.catalog?.offline && state.engine.state === 'ready') loadModels({ refresh: true });
+    // `keys` también se notifica en cada guardado de ajustes: solo importa si cambió alguna.
+    const sig = JSON.stringify(state.keys);
+    if (sig === keysSig) return;
+    keysSig = sig;
+    renderProviders();
+    // Con una key nueva la lista de ese proveedor pasa de «de referencia» a «en vivo».
+    if (models.loaded && state.engine.state === 'ready') loadModels({ refresh: true });
   });
   subscribe('tab', () => {
     if (MODEL_TABS.has(state.activeTab) && !models.loaded && !models.loading) loadModels();

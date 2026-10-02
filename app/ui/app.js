@@ -88,6 +88,8 @@ function onEngineEvent({ event, data = {}, engineNowMs }) {
     case 'warn': {
       if (data.kind === 'audio-delivery' || data.kind === 'latency-budget') {
         toast({ kind: 'warn', title: data.kind === 'latency-budget' ? 'Ajusta el retraso' : 'Entrega de voz', message: data.message });
+      } else if (data.kind === 'provider') {
+        toast({ kind: 'warn', title: 'Proveedor sin cambiar', message: data.message, action: { label: 'Revisar cuentas', run: openAccounts } });
       } else if (data.kind === 'output' || data.kind === 'monitor') {
         toast({ kind: 'info', title: data.kind === 'output' ? 'Salida del doblaje' : 'Escucha local', message: data.message });
       } else if (data.kind === 'vox') {

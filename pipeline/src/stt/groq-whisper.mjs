@@ -6,6 +6,11 @@
 // son la señal real de Whisper de "esto no era voz". Groq no ofrece streaming,
 // así que no hay modo WebSocket.
 //
+// El mismo cliente sirve para OpenAI (`provider: "openai"`), cuya API de
+// transcripción es la que Groq replica: `whisper-1` responde igual
+// (`verbose_json`); los `gpt-4o-*-transcribe` solo admiten `json`, así que la
+// confianza sale de los logprobs por token (`include[]=logprobs`).
+//
 // El vocabulario custom (nombres propios, jerga) va en el campo `prompt`, que
 // Whisper usa como contexto previo: sesga la ortografía de los términos sin
 // forzarlos. Whisper solo mira los últimos ~224 tokens del prompt, por eso se
@@ -16,7 +21,15 @@ import { fetchWithRetry, throwHttpError, isAbortError } from "../util/http.mjs";
 import { normalizeLanguage } from "../languages.mjs";
 
 export const GROQ_BASE_URL = "https://api.groq.com/openai/v1";
+export const OPENAI_BASE_URL = "https://api.openai.com/v1";
 export const DEFAULT_WHISPER_MODEL = "whisper-large-v3";
+export const DEFAULT_OPENAI_STT_MODEL = "gpt-4o-transcribe";
+
+/** Proveedores con la API de transcripción estilo OpenAI que atiende este cliente. */
+const WHISPER_API_PROVIDERS = Object.freeze({
+  groq: { label: "Groq Whisper", baseUrl: GROQ_BASE_URL, model: DEFAULT_WHISPER_MODEL, envKey: "GROQ_API_KEY" },
+  openai: { label: "OpenAI STT", baseUrl: OPENAI_BASE_URL, model: DEFAULT_OPENAI_STT_MODEL, envKey: "OPENAI_API_KEY" },
+});
 
 /**
  * Whisper alucina estas muletillas de cierre de video a partir de silencio o
@@ -48,12 +61,13 @@ const PROMPT_MAX_TOKENS = 224;
 const CHARS_PER_TOKEN = 4;
 
 export class SttError extends Error {
-  constructor(message, { cause, status, model } = {}) {
+  constructor(message, { cause, status, model, provider } = {}) {
     super(message, { cause });
     this.name = "SttError";
     this.status = status;
     this.stage = "stt";
     if (model) this.model = model;
+    if (provider) this.provider = provider;
   }
 }
 
@@ -157,6 +171,13 @@ export function whisperDiscardReason(text, segments = [], evidence = null, { min
   return null;
 }
 
+/** Confianza 0..1 a partir de logprobs por token (`gpt-4o-*-transcribe`); null si no hay. */
+export function confidenceFromLogprobs(logprobs) {
+  const values = (Array.isArray(logprobs) ? logprobs : []).map((t) => finiteMetric(t?.logprob)).filter((v) => v !== null);
+  if (!values.length) return null;
+  return Math.min(1, Math.exp(values.reduce((a, b) => a + b, 0) / values.length));
+}
+
 /** Compatibilidad con la firma booleana de la referencia. */
 export function shouldDiscardWhisperTranscript(text, segments = [], evidence = null, options) {
   return whisperDiscardReason(text, segments, evidence, options) !== null;
@@ -200,24 +221,28 @@ export class GroqWhisperStt {
   #fetch;
 
   constructor({
-    apiKey = process.env.GROQ_API_KEY,
-    model = DEFAULT_WHISPER_MODEL,
+    provider = "groq",
+    apiKey = process.env[(WHISPER_API_PROVIDERS[provider] ?? WHISPER_API_PROVIDERS.groq).envKey],
+    model = (WHISPER_API_PROVIDERS[provider] ?? WHISPER_API_PROVIDERS.groq).model,
     temperature = 0,
     language = "es",
     minConfidence = 0.3,
     vocabulary = null,
     userId = "default",
-    baseUrl = GROQ_BASE_URL,
+    baseUrl = (WHISPER_API_PROVIDERS[provider] ?? WHISPER_API_PROVIDERS.groq).baseUrl,
     timeoutMs = 30_000,
     retries = 2,
     sleep,
     fetch: fetchImpl,
     logger = null,
   } = {}) {
-    if (!apiKey) throw new TypeError("GroqWhisperStt: falta `apiKey` (GROQ_API_KEY)");
+    const info = WHISPER_API_PROVIDERS[provider] ?? WHISPER_API_PROVIDERS.groq;
+    if (!apiKey) throw new TypeError(`GroqWhisperStt: falta \`apiKey\` (${info.envKey})`);
     this.#apiKey = apiKey;
     this.#fetch = fetchImpl;
-    this.model = String(model || DEFAULT_WHISPER_MODEL);
+    this.provider = WHISPER_API_PROVIDERS[provider] ? provider : "groq";
+    this.providerLabel = info.label;
+    this.model = String(model || info.model);
     this.temperature = clampSttTemperature(temperature);
     this.language = normalizeLanguage(language);
     this.minConfidence = minConfidence;
@@ -267,27 +292,31 @@ export class GroqWhisperStt {
     const form = new FormData();
     form.append("file", new Blob([wav], { type: "audio/wav" }), "turn.wav");
     form.append("model", model);
-    form.append("response_format", "verbose_json");
-    form.append("timestamp_granularities[]", "segment");
+    // Solo Whisper da segmentos con `no_speech_prob`; el resto, logprobs por token.
+    const verbose = /whisper/i.test(model);
+    form.append("response_format", verbose ? "verbose_json" : "json");
+    form.append(verbose ? "timestamp_granularities[]" : "include[]", verbose ? "segment" : "logprobs");
     form.append("language", lang);
     form.append("temperature", String(this.temperature));
     if (vocabularyPrompt) form.append("prompt", vocabularyPrompt);
 
     const url = `${this.baseUrl}/audio/transcriptions`;
+    const label = this.providerLabel;
+    const provider = this.provider;
     let res;
     try {
       res = await fetchWithRetry(
         url,
         { method: "POST", headers: { Authorization: `Bearer ${this.#apiKey}` }, body: form },
-        { retries: this.retries, timeoutMs: this.timeoutMs, signal, sleep: this.sleep, provider: "Groq Whisper", fetch: this.#fetch },
+        { retries: this.retries, timeoutMs: this.timeoutMs, signal, sleep: this.sleep, provider: label, fetch: this.#fetch },
       );
     } catch (error) {
       if (isAbortError(error) || signal?.aborted) throw error;
-      throw new SttError(`Groq Whisper: ${error.message}`, { cause: error, status: error.status, model });
+      throw new SttError(`${label}: ${error.message}`, { cause: error, status: error.status, model, provider });
     }
     if (!res.ok) {
-      await throwHttpError(res, "Groq Whisper", url).catch((error) => {
-        throw new SttError(error.message, { cause: error, status: error.status, model });
+      await throwHttpError(res, label, url).catch((error) => {
+        throw new SttError(error.message, { cause: error, status: error.status, model, provider });
       });
     }
 
@@ -295,15 +324,16 @@ export class GroqWhisperStt {
     try {
       data = await res.json();
     } catch (error) {
-      throw new SttError("Groq Whisper devolvió una respuesta no JSON", { cause: error });
+      throw new SttError(`${label} devolvió una respuesta no JSON`, { cause: error, model, provider });
     }
     const text = String(data?.text ?? "").trim();
     const segments = Array.isArray(data?.segments) ? data.segments : [];
     const words = Array.isArray(data?.words) ? data.words : [];
-    const summary = summarizeSegments(segments);
-    const reason = whisperDiscardReason(text, segments, evidence, { minConfidence: this.minConfidence });
+    const confidence = verbose ? summarizeSegments(segments).confidence : confidenceFromLogprobs(data?.logprobs);
+    const reason = whisperDiscardReason(text, segments, evidence, { minConfidence: this.minConfidence })
+      ?? (!verbose && confidence !== null && confidence < this.minConfidence ? "low_confidence" : null);
     const base = {
-      confidence: summary.confidence,
+      confidence,
       words,
       segments,
       language: data?.language ?? lang,
@@ -311,7 +341,7 @@ export class GroqWhisperStt {
       model,
     };
     if (reason) {
-      this.logger?.debug?.("stt.discard", { reason, text, confidence: summary.confidence });
+      this.logger?.debug?.("stt.discard", { reason, text, confidence });
       return { ...base, text: "", discarded: true, reason };
     }
     return { ...base, text, discarded: false, reason: null };
