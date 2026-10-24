@@ -97,15 +97,20 @@ Ajustes planos nuevos (en `settings.json`, normalizados por el engine; valores f
 
 | Clave | Default | Rango / valores |
 |---|---|---|
-| `sttProvider` | `groq` | `groq` (Whisper) \| `elevenlabs` (Scribe) \| `openai` |
-| `sttModel` | `whisper-large-v3` | id del proveedor elegido: Groq con "whisper"; ElevenLabs `scribe_*` (no realtime); OpenAI `whisper-1` \| `gpt-4o(-mini)-transcribe`. Si no es de ese proveedor se usa su modelo por defecto (`scribe_v2`, `gpt-4o-transcribe`) |
+| `sttProvider` | `groq` | `groq` (Whisper) \| `elevenlabs` (Scribe) \| `openai` \| `deepgram` (Nova-3) |
+| `sttModel` | `whisper-large-v3` | id del proveedor elegido: Groq con "whisper"; ElevenLabs `scribe_v1` \| `scribe_v2` \| `scribe_v2_realtime`; OpenAI `whisper-1` \| `gpt-4o(-mini)-transcribe`; Deepgram `nova-3` \| `nova-3-multi`. Si no es de ese proveedor se usa su modelo por defecto |
 | `sttTemperature` | `0` | 0–1 |
 | `translateProvider` | `groq` | `groq` \| `openai` |
 | `translateModel` | `openai/gpt-oss-120b` | id de chat del proveedor elegido (OpenAI: `gpt-*`, `o1/o3/o4*` sin prefijo `org/`; por defecto `gpt-4.1`) |
 | `translateTemperature` | `0.2` | 0–1 |
 | `translateReasoningEffort` | `low` | `low`\|`medium`\|`high` (gpt-oss); también `none`\|`default` (Qwen3). Solo en modelos que lo admiten (ver `reasoningEfforts` del modelo); se ignora en el resto y se traduce entre escalas (Qwen3: low→none, medium/high→default) |
 | `memoryTurns` | `8` | 0–64 (ya existía) |
-| `ttsModel` | `eleven_multilingual_v2` | id de ElevenLabs con TTS |
+| `ttsProvider` | `elevenlabs` | `elevenlabs` (clon) \| `openai` \| `groq` (Orpheus, sin clon) |
+| `ttsModel` | `eleven_multilingual_v2` | id del proveedor de voz. OpenAI: `gpt-4o-mini-tts` \| `tts-1` \| `tts-1-hd`. Groq: `canopylabs/orpheus-v1-english` \| `canopylabs/orpheus-arabic-saudi` |
+| `openaiTtsVoice` | `alloy` | voz de catálogo de OpenAI |
+| `groqTtsVoice` | `troy` | voz de catálogo de Orpheus (cambia con el modelo árabe) |
+| `dubbingPath` | `staged` | `staged` (STT + traducción + TTS) \| `eleven_realtime` (agente speech-to-speech; no usa traducción ni TTS por etapas). Cambiarlo con la sesión abierta reinicia el audio |
+| `realtimeModel` | `eleven_realtime_v1_max` | `eleven_realtime_v1_max` \| `eleven_realtime_v1_mini`. El costo es estimado (`knownPrice: false`) |
 | `ttsStability` | `0.5` | 0–1 (en `eleven_v3` se ajusta al preset más cercano: 0 Creativo, 0.5 Natural, 1 Robusto) |
 | `ttsSimilarityBoost` | `0.75` | 0–1 |
 | `ttsStyle` | `0` | 0–1 (solo si el modelo lo admite) |
@@ -113,8 +118,8 @@ Ajustes planos nuevos (en `settings.json`, normalizados por el engine; valores f
 | `ttsSpeakerBoost` | `true` | bool (solo si el modelo lo admite) |
 | `ttsTextNormalization` | `auto` | `auto`\|`on`\|`off` |
 
-Proveedores por etapa (2026-10-01): `providerKeys` admite `groq`, `elevenlabs` y `openai`. Para doblar solo hacen
-falta las de `sttProvider`, `translateProvider` y `elevenlabs` (TTS); si falta la del proveedor elegido,
+Proveedores por etapa (2026-10-24): `providerKeys` admite `groq`, `elevenlabs`, `openai` y `deepgram`. En `staged` hacen
+falta las de `sttProvider`, `translateProvider` y `ttsProvider`. En `eleven_realtime` solo ElevenLabs. Si falta la del proveedor elegido,
 `session.start` responde `missing_key` nombrándolo. Cambiar de proveedor con la sesión en curso sustituye el
 cliente de esa etapa desde el siguiente turno (la memoria del traductor se conserva); si falta su key la etapa
 sigue con el proveedor anterior y se emite `warn` `{ kind: 'provider', message }`.

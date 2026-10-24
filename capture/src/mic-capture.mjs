@@ -141,20 +141,26 @@ export class MicCapture extends EventEmitter {
     return this.segmenter?.decision ?? null;
   }
 
+  #pushPcm(pcm) {
+    if (!pcm?.byteLength || !this.segmenter) return;
+    this.emit("pcm", pcm);
+    this.segmenter.push(pcm, this.clock());
+  }
+
   // --- Fuente inyectada ------------------------------------------------------------------------
 
   #attachSource(source) {
     const onData = (chunk) => {
       if (!this.segmenter) return;
-      if (!this.resampler) { this.segmenter.push(chunk, this.clock()); return; }
+      if (!this.resampler) { this.#pushPcm(chunk); return; }
       const data = this.pcmTail.length ? Buffer.concat([this.pcmTail, chunk]) : chunk;
       const bytes = data.length - data.length % 2;
       this.pcmTail = bytes === data.length ? Buffer.alloc(0) : Buffer.from(data.subarray(bytes));
-      this.segmenter.push(this.resampler.process(data.subarray(0, bytes)), this.clock());
+      this.#pushPcm(this.resampler.process(data.subarray(0, bytes)));
     };
     const onEnd = () => {
       if (!this.running) return;
-      if (this.resampler) this.segmenter.push(this.resampler.flush(), this.clock());
+      if (this.resampler) this.#pushPcm(this.resampler.flush());
       this.segmenter.flush();
       this.emit("sourceEnd");
     };
@@ -193,7 +199,7 @@ export class MicCapture extends EventEmitter {
     let spawnFailed = false;
 
     child.stdout.on("data", (chunk) => {
-      if (this.segmenter && this.helper === child) this.segmenter.push(chunk, this.clock());
+      if (this.segmenter && this.helper === child) this.#pushPcm(chunk);
     });
     if (child.stderr) {
       child.stderr.on("data", lineSplitter((line) => this.emit("helperLog", line)));

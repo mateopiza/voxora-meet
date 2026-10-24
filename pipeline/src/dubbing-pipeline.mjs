@@ -26,8 +26,14 @@ export class DubbingError extends Error {
 
 /** Cola FIFO con concurrencia 1: `run(fn)` ejecuta `fn` cuando terminó la anterior. */
 export class StageQueue {
-  #tail = Promise.resolve();
+  #tails;
+  #next = 0;
   #pending = 0;
+
+  constructor(concurrency = 1) {
+    if (!Number.isInteger(concurrency) || concurrency < 1 || concurrency > 3) throw new RangeError('StageQueue: concurrency debe estar entre 1 y 3');
+    this.#tails = Array.from({ length: concurrency }, () => Promise.resolve());
+  }
 
   get pending() {
     return this.#pending;
@@ -35,9 +41,10 @@ export class StageQueue {
 
   run(fn) {
     this.#pending += 1;
-    const next = this.#tail.then(fn, fn);
+    const lane = this.#next++ % this.#tails.length;
+    const next = this.#tails[lane].then(fn, fn);
     // La cola nunca se bloquea por un fallo: el siguiente arranca igual.
-    this.#tail = next.then(
+    this.#tails[lane] = next.then(
       () => { this.#pending -= 1; },
       () => { this.#pending -= 1; },
     );
@@ -46,7 +53,7 @@ export class StageQueue {
 
   /** Promesa que resuelve cuando todo lo encolado hasta ahora terminó. */
   idle() {
-    return this.#tail;
+    return Promise.all(this.#tails);
   }
 }
 
@@ -98,8 +105,10 @@ export class DubbingPipeline extends EventEmitter {
     allowMp3 = false,
     now = () => performance.now(),
     logger = null,
+    ttsConcurrency = 1,
   } = {}) {
     super();
+    this.#queues.tts = new StageQueue(ttsConcurrency);
     if (!stt?.transcribeTurn) throw new TypeError("DubbingPipeline: `stt.transcribeTurn` obligatorio");
     if (!translator?.translate) throw new TypeError("DubbingPipeline: `translator.translate` obligatorio");
     if (!tts?.synthesize) throw new TypeError("DubbingPipeline: `tts.synthesize` obligatorio");
@@ -159,15 +168,23 @@ export class DubbingPipeline extends EventEmitter {
    * Cambia en caliente el cliente de STT y/o el traductor (cambio de proveedor);
    * rige desde el siguiente turno. La memoria de contexto pasa al traductor nuevo.
    */
-  replaceStages({ stt, translator } = {}) {
+  replaceStages({ stt, translator, tts } = {}) {
     if (stt) {
       if (!stt.transcribeTurn) throw new TypeError("DubbingPipeline: `stt.transcribeTurn` obligatorio");
+      const prev = this.#stt;
       this.#stt = stt;
+      prev.close?.();
     }
     if (translator) {
       if (!translator.translate) throw new TypeError("DubbingPipeline: `translator.translate` obligatorio");
       for (const turn of this.#translator.memory ?? []) translator.remember?.(turn.source, turn.translation);
       this.#translator = translator;
+    }
+    if (tts) {
+      if (!tts.synthesize) throw new TypeError("DubbingPipeline: `tts.synthesize` obligatorio");
+      const prev = this.#tts;
+      this.#tts = tts;
+      prev.close?.();
     }
     return this.currentSettings();
   }
@@ -198,6 +215,10 @@ export class DubbingPipeline extends EventEmitter {
     if (p.ttsTextNormalization) tts.setTextNormalization?.(p.ttsTextNormalization);
     if (p.ttsCostMultiplier !== undefined) this.ttsCostMultiplier = Number(p.ttsCostMultiplier) > 0 ? Number(p.ttsCostMultiplier) : null;
     if (p.voiceId) this.setVoiceId(p.voiceId);
+    if (tts.provider === "openai" && p.openaiTtsVoice) tts.setVoice?.(p.openaiTtsVoice);
+    if (tts.provider === "groq" && p.groqTtsVoice) tts.setVoice?.(p.groqTtsVoice);
+    if (p.styleInstruction !== undefined) tts.setInstructions?.(p.styleInstruction);
+    if (p.targetLanguage) tts.setLanguage?.(p.targetLanguage);
     return this.currentSettings();
   }
 
@@ -208,6 +229,7 @@ export class DubbingPipeline extends EventEmitter {
     const tts = this.#tts;
     return {
       sttProvider: stt.provider ?? null,
+      sttClientKind: stt.clientKind ?? stt.provider ?? null,
       sttModel: stt.model ?? null,
       sttTemperature: stt.temperature ?? null,
       translateProvider: tr.provider ?? null,
@@ -215,6 +237,7 @@ export class DubbingPipeline extends EventEmitter {
       translateTemperature: tr.temperature ?? null,
       translateReasoningEffort: tr.reasoningEffort ?? null,
       memoryTurns: tr.memoryTurns ?? null,
+      ttsProvider: tts.provider ?? "elevenlabs",
       ttsModel: tts.modelId ?? null,
       ttsCapabilities: tts.capabilities ? { ...tts.capabilities } : null,
       voiceSettings: tts.voiceSettings ? { ...tts.voiceSettings } : null,
@@ -225,6 +248,7 @@ export class DubbingPipeline extends EventEmitter {
   }
 
   async resolveVoiceId() {
+    if (this.#tts?.provider === "openai" || this.#tts?.provider === "groq") return this.#tts.voice || "stock";
     if (this.#voiceId) return this.#voiceId;
     const profile = await this.#profiles.get(this.#userId);
     if (!profile?.voiceId) throw new DubbingError("El usuario no tiene voz clonada configurada", { stage: "tts" });
@@ -239,6 +263,12 @@ export class DubbingPipeline extends EventEmitter {
   /** Rearma el controlador tras un `abort()`. */
   reset() {
     this.#controller = new AbortController();
+  }
+
+  /** Cierra sockets de proveedores (Scribe realtime). El abort de turnos lo hace la sesión. */
+  async close() {
+    await this.#stt?.close?.();
+    await this.#tts?.close?.();
   }
 
   /** Espera a que todas las etapas queden vacías. */

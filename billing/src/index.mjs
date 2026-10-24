@@ -41,6 +41,11 @@ export const STT_PRICES = Object.freeze({
   // referencia 2026-10-01; con `keyterms` ElevenLabs cobra un recargo que no se modela).
   scribe_v2: 0.4,
   scribe_v1: 0.4,
+  scribe_v2_realtime: 0.4,
+  // Deepgram Nova-3 pregrabado, pay-as-you-go (https://deepgram.com/pricing, 2026-10):
+  // monolingüe 0.26 USD/h, multilingüe 0.31 USD/h.
+  "nova-3": 0.26,
+  "nova-3-multi": 0.31,
   // OpenAI (https://openai.com/api/pricing, referencia 2026-10-01): 0.006 USD/min
   // (whisper-1, gpt-4o-transcribe) y 0.003 USD/min (gpt-4o-mini-transcribe).
   "whisper-1": 0.36,
@@ -57,9 +62,41 @@ export const STT_MIN_BILLABLE_MS = 10_000;
 /** Proveedor de un modelo de STT según su id (`scribe_*` ElevenLabs, `whisper-1`/`*-transcribe` OpenAI). */
 export function sttProviderOf(model) {
   const id = String(model ?? "").toLowerCase();
-  if (/^scribe/.test(id)) return "elevenlabs";
+  if (/^nova-/.test(id)) return "deepgram";
+  if (/^scribe/.test(id) || /^eleven_realtime/.test(id)) return "elevenlabs";
   if (id === "whisper-1" || /transcribe/.test(id)) return "openai";
   return "groq";
+}
+
+/**
+ * USD por 1k caracteres de TTS que no usa el multiplicador de ElevenLabs.
+ * OpenAI (https://platform.openai.com/docs/pricing): tts-1 $15/1M, tts-1-hd $30/1M,
+ * gpt-4o-mini-tts $0.60/1M caracteres de texto. Groq Orpheus: $22 y $40 por 1M.
+ */
+export const TTS_USD_PER_1K_CHARS = Object.freeze({
+  "gpt-4o-mini-tts": 0.0006,
+  "tts-1": 0.015,
+  "tts-1-hd": 0.03,
+  "canopylabs/orpheus-v1-english": 0.022,
+  "canopylabs/orpheus-arabic-saudi": 0.04,
+});
+
+/**
+ * Eleven Realtime no publica una tarifa estable por minuto. El número es un
+ * estimado por hora de audio de entrada para comparar en la UI (`known: false`).
+ */
+export const REALTIME_USD_PER_HOUR_ESTIMATE = Object.freeze({
+  eleven_realtime_v1_max: 2.4,
+  eleven_realtime_v1_mini: 0.8,
+});
+
+/** Proveedor de un modelo de voz según su id. */
+export function ttsProviderOf(model) {
+  const id = String(model ?? "");
+  if (TTS_USD_PER_1K_CHARS[id] || TTS_USD_PER_1K_CHARS[id.toLowerCase()]) {
+    return /^canopylabs\//i.test(id) ? "groq" : "openai";
+  }
+  return "elevenlabs";
 }
 
 /** Proveedor de un modelo de chat según su id (los de OpenAI no llevan prefijo `org/`). */
@@ -161,6 +198,21 @@ export function chatPriceFor(model) {
   return { model: id, ...(chatProviderOf(id) === "openai" ? DEFAULT_OPENAI_CHAT_PRICE : DEFAULT_CHAT_PRICE), known: false };
 }
 
+/** USD por 1k caracteres y proveedor del modelo de voz. */
+export function ttsPriceFor(model, override) {
+  const id = cleanModelId(model, DEFAULT_MODELS.tts);
+  const direct = TTS_USD_PER_1K_CHARS[id] ?? TTS_USD_PER_1K_CHARS[id.toLowerCase()];
+  if (direct != null) return { model: id, usdPer1k: direct, provider: ttsProviderOf(id), known: true, multiplier: null };
+  const multiplier = ttsCostMultiplierFor(id, override);
+  return {
+    model: id,
+    usdPer1k: Math.round(TTS_BASE_USD_PER_1K_CHARS * multiplier * 1e6) / 1e6,
+    provider: "elevenlabs",
+    known: Object.hasOwn(TTS_COST_MULTIPLIERS, id),
+    multiplier,
+  };
+}
+
 /** Multiplicador de costo por carácter del modelo TTS (`override` = dato en vivo del catálogo). */
 export function ttsCostMultiplierFor(model, override) {
   const n = Number(override);
@@ -174,18 +226,35 @@ export function ttsCostMultiplierFor(model, override) {
  * planas de settings (`sttModel`, `translateModel`, `ttsModel`) y
  * `ttsCostMultiplier` (multiplicador en vivo de ElevenLabs, si se conoce).
  */
-export function pricingFor({ sttModel, translateModel, ttsModel, ttsCostMultiplier } = {}) {
+export function pricingFor({ sttModel, translateModel, ttsModel, ttsCostMultiplier, dubbingPath, realtimeModel } = {}) {
+  if (dubbingPath === "eleven_realtime") {
+    const id = REALTIME_USD_PER_HOUR_ESTIMATE[realtimeModel] != null ? realtimeModel : "eleven_realtime_v1_max";
+    const usd = REALTIME_USD_PER_HOUR_ESTIMATE[id];
+    return Object.freeze({
+      mode: "realtime",
+      stt: Object.freeze({
+        provider: "elevenlabs", model: id, unit: "hora de audio", usdPerUnit: usd, minBillableMs: 0, knownPrice: false,
+      }),
+      translate: Object.freeze({
+        provider: "elevenlabs", model: id, unit: "1M tokens", usdPerInputUnit: 0, usdPerOutputUnit: 0, knownPrice: false,
+      }),
+      tts: Object.freeze({
+        provider: "elevenlabs", model: id, unit: "1k caracteres", usdPerUnit: 0, costMultiplier: 0, knownPrice: false,
+      }),
+    });
+  }
   const stt = sttPriceFor(sttModel);
   const chat = chatPriceFor(translateModel);
-  const ttsId = cleanModelId(ttsModel, DEFAULT_MODELS.tts);
-  const multiplier = ttsCostMultiplierFor(ttsId, ttsCostMultiplier);
+  const tts = ttsPriceFor(ttsModel, ttsCostMultiplier);
   return Object.freeze({
+    mode: "staged",
     stt: Object.freeze({
       provider: sttProviderOf(stt.model),
       model: stt.model,
       unit: "hora de audio",
       usdPerUnit: stt.usdPerHour,
       minBillableMs: sttProviderOf(stt.model) === "groq" ? STT_MIN_BILLABLE_MS : 0,
+      knownPrice: stt.known,
     }),
     translate: Object.freeze({
       provider: chatProviderOf(chat.model),
@@ -196,11 +265,12 @@ export function pricingFor({ sttModel, translateModel, ttsModel, ttsCostMultipli
       knownPrice: chat.known,
     }),
     tts: Object.freeze({
-      provider: "elevenlabs",
-      model: ttsId,
+      provider: tts.provider,
+      model: tts.model,
       unit: "1k caracteres",
-      usdPerUnit: Math.round(TTS_BASE_USD_PER_1K_CHARS * multiplier * 1e6) / 1e6,
-      costMultiplier: multiplier,
+      usdPerUnit: tts.usdPer1k,
+      costMultiplier: tts.multiplier,
+      knownPrice: tts.known,
     }),
   });
 }
@@ -220,7 +290,7 @@ function nonNegativeNumber(value) {
 }
 
 function hasModelOptions(options) {
-  return ["sttModel", "translateModel", "ttsModel", "ttsCostMultiplier"].some((k) => options?.[k] != null);
+  return ["sttModel", "translateModel", "ttsModel", "ttsCostMultiplier", "dubbingPath", "realtimeModel"].some((k) => options?.[k] != null);
 }
 
 /** `pricing` explícito, o la tabla de los modelos pedidos, o la de por defecto. */

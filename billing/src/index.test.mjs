@@ -279,7 +279,10 @@ test("proveedores por etapa: precios de Scribe y OpenAI, sin mínimo de 10 s fue
   assert.equal(sttPriceFor("scribe_v2").usdPerHour, 0.4);
   assert.equal(sttPriceFor("scribe_v9").usdPerHour, 0.4, "Scribe desconocido: no se asume el precio de Groq");
   assert.equal(sttPriceFor("gpt-4o-mini-transcribe").usdPerHour, 0.18);
-  assert.deepEqual([sttProviderOf("scribe_v2"), sttProviderOf("whisper-1"), sttProviderOf("whisper-large-v3")], ["elevenlabs", "openai", "groq"]);
+  assert.deepEqual([sttProviderOf("scribe_v2"), sttProviderOf("whisper-1"), sttProviderOf("whisper-large-v3"), sttProviderOf("nova-3")], ["elevenlabs", "openai", "groq", "deepgram"]);
+  assert.equal(sttPriceFor("nova-3-multi").usdPerHour, 0.31);
+  assert.equal(pricingFor({ ttsModel: "canopylabs/orpheus-v1-english" }).tts.usdPerUnit, 0.022);
+  assert.equal(pricingFor({ dubbingPath: "eleven_realtime", realtimeModel: "eleven_realtime_v1_max" }).stt.knownPrice, false);
   assert.deepEqual([chatProviderOf("gpt-4.1"), chatProviderOf("o4-mini"), chatProviderOf("openai/gpt-oss-120b"), chatProviderOf("llama-3.3-70b-versatile")], ["openai", "openai", "groq", "groq"]);
 
   const gpt41 = chatPriceFor("gpt-4.1-2025-04-14");

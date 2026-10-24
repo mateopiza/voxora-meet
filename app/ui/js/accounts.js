@@ -9,9 +9,10 @@ import { $, $$, openSheet, setBusy, setIcon, toast, toastError } from './dom.js'
 import { notify, state, subscribe } from './store.js';
 
 const PROVIDERS = [
-  { id: 'groq', name: 'Groq', desc: 'Transcripción (Whisper) y traducción.', placeholder: 'gsk_…', url: 'https://console.groq.com/keys' },
-  { id: 'elevenlabs', name: 'ElevenLabs', desc: 'Tu voz clonada (síntesis y clonación) y transcripción con Scribe.', placeholder: 'sk_…', url: 'https://elevenlabs.io/app/settings/api-keys' },
-  { id: 'openai', name: 'OpenAI', desc: 'Traducción con GPT y transcripción, si lo eliges en Modelos.', placeholder: 'sk-…', url: 'https://platform.openai.com/api-keys' },
+  { id: 'groq', name: 'Groq', desc: 'Transcripción (Whisper), traducción y voz Orpheus.', placeholder: 'gsk_…', url: 'https://console.groq.com/keys' },
+  { id: 'elevenlabs', name: 'ElevenLabs', desc: 'Voz clonada, Scribe, Scribe Realtime y Eleven Realtime.', placeholder: 'sk_…', url: 'https://elevenlabs.io/app/settings/api-keys' },
+  { id: 'openai', name: 'OpenAI', desc: 'Traducción, transcripción y voz de catálogo, si lo eliges en Modelos.', placeholder: 'sk-…', url: 'https://platform.openai.com/api-keys' },
+  { id: 'deepgram', name: 'Deepgram', desc: 'Transcripción Nova-3, si lo eliges en Modelos.', placeholder: 'token…', url: 'https://console.deepgram.com/' },
 ];
 const LABELS = Object.fromEntries(PROVIDERS.map((p) => [p.id, p.name]));
 const blocks = [];  // { provider, block, input, clear, save }
@@ -20,7 +21,9 @@ const els = {};
 /** Proveedores cuya key hace falta con los ajustes actuales: transcripción, traducción y ElevenLabs (voz). */
 export function requiredProviders() {
   const s = state.settings || {};
-  const ids = new Set([s.sttProvider || 'groq', s.translateProvider || 'groq', 'elevenlabs']);
+  const ids = (s.dubbingPath || 'staged') === 'eleven_realtime'
+    ? new Set(['elevenlabs'])
+    : new Set([s.sttProvider || 'groq', s.translateProvider || 'groq', s.ttsProvider || 'elevenlabs']);
   return PROVIDERS.filter((p) => ids.has(p.id));
 }
 

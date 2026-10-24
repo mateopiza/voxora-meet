@@ -4,9 +4,10 @@
 // se devuelve un mensaje genérico y el detalle viaja aparte en `detail`.
 
 const PROVIDERS = [
-  { id: 'openai', label: 'OpenAI', match: /\bOpenAI (Chat|STT)\b|api\.openai\.com/ },
+  { id: 'deepgram', label: 'Deepgram', match: /deepgram/i },
+  { id: 'openai', label: 'OpenAI', match: /\bOpenAI (Chat|STT|TTS)\b|api\.openai\.com/ },
   { id: 'elevenlabs', label: 'ElevenLabs', match: /elevenlabs|tts|voices/i },
-  { id: 'groq', label: 'Groq', match: /groq|whisper|stt|chat|translat/i },
+  { id: 'groq', label: 'Groq', match: /groq|whisper|orpheus|stt|chat|translat/i },
 ];
 const byId = (id) => PROVIDERS.find((p) => p.id === id) ?? null;
 

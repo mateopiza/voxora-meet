@@ -279,10 +279,19 @@
           <div class="field">
             <div class="field__label field__label--split">
               <label for="rng-delay">Retraso de sincronía</label>
-              <output class="value-chip" id="delay-value" for="rng-delay">3,0 s</output>
+              <output class="value-chip" id="delay-value" for="rng-delay">6,0 s</output>
             </div>
-            <input class="range" type="range" id="rng-delay" min="2" max="6" step="0.1" value="3">
+            <input class="range" type="range" id="rng-delay" min="2" max="6" step="0.1" value="6">
             <div class="range__scale"><span>2 s · más ágil</span><span>6 s · frases largas</span></div>
+          </div>
+
+          <div class="field">
+            <span class="field__label" id="lbl-segmentation">Segmentos de voz</span>
+            <div class="segmented segmented--wrap" id="seg-segmentation" role="radiogroup" aria-labelledby="lbl-segmentation">
+              <button type="button" role="radio" data-value="fixed"><span>Ventanas sincronizadas</span><small>recomendado</small></button>
+              <button type="button" role="radio" data-value="pause"><span>Por pausas</span></button>
+            </div>
+            <p class="field__hint">Las ventanas procesan tu voz aunque sigas hablando. Su duración se ajusta al retraso y al tiempo de traducción. Cambiar el modo requiere reiniciar el doblaje.</p>
           </div>
 
           <div class="field">
@@ -509,6 +518,7 @@
           <p class="eyebrow">Costo estimado · por hora</p>
           <h2 class="models-summary__title">Tu combinación de modelos</h2>
           <p class="models-summary__note" id="models-note"><svg class="i"><use href="#i-zap"/></svg><span id="models-note-text">Los cambios se guardan solos y se aplican desde la siguiente frase.</span></p>
+          <p class="field__hint" id="models-route"></p>
         </div>
         <div class="cost-tiles" id="cost-tiles" aria-live="polite">
           <div class="stat-tile" title="Créditos VOX que consume cada minuto de reunión">
@@ -538,6 +548,32 @@
           <span class="badge" data-tone="warn" id="models-offline" hidden title="No se pudo consultar a algún proveedor: se muestra el catálogo guardado en la app"><svg class="i"><use href="#i-wifi-off"/></svg>Sin conexión · catálogo local</span>
           <button class="btn btn--glass btn--sm" id="btn-models-refresh" type="button"><svg class="i"><use href="#i-refresh"/></svg><span>Actualizar lista</span></button>
           <span class="models-summary__fetched" id="models-fetched"></span>
+        </div>
+      </article>
+
+      <article class="card glass card--model" id="card-path">
+        <header class="card__head">
+          <div class="card__head-main">
+            <span class="icon-tile"><svg class="i"><use href="#i-zap"/></svg></span>
+            <div>
+              <p class="eyebrow">Comparar</p>
+              <h2 class="card__title">Camino</h2>
+            </div>
+          </div>
+        </header>
+        <div class="card__body">
+          <div class="field">
+            <label class="field__label" for="sel-dubbing-path">Cómo se dobla</label>
+            <select class="select" id="sel-dubbing-path">
+              <option value="staged">Por etapas: transcripción, traducción y voz</option>
+              <option value="eleven_realtime">Eleven Realtime: un solo paso</option>
+            </select>
+          </div>
+          <div class="field" id="field-realtime-model">
+            <label class="field__label" for="sel-realtime-model">Modelo Realtime</label>
+            <select class="select" id="sel-realtime-model"></select>
+            <p class="field__hint" id="realtime-hint">Este camino no usa Groq ni OpenAI. Traduce y habla dentro de ElevenLabs. Cambiar de camino reinicia el audio de la sesión.</p>
+          </div>
         </div>
       </article>
 
@@ -594,7 +630,7 @@
           <div class="card__head-main">
             <span class="icon-tile" data-tone="pink"><svg class="i"><use href="#i-audio-lines"/></svg></span>
             <div>
-              <p class="eyebrow eyebrow--pink">ElevenLabs</p>
+              <p class="eyebrow eyebrow--pink" data-eyebrow="tts">ElevenLabs</p>
               <h2 class="card__title">Voz</h2>
             </div>
           </div>
@@ -602,9 +638,18 @@
         </header>
         <div class="card__body">
           <div class="field">
+            <label class="field__label" for="sel-tts-provider">Proveedor</label>
+            <select class="select" id="sel-tts-provider"></select>
+          </div>
+          <div class="field">
             <label class="field__label" for="sel-tts-model">Modelo</label>
             <select class="select" id="sel-tts-model"></select>
             <div class="model-info" id="tts-info" hidden></div>
+          </div>
+          <div class="field" id="field-tts-voice" hidden>
+            <label class="field__label" for="sel-tts-voice">Voz de catálogo</label>
+            <select class="select" id="sel-tts-voice"></select>
+            <p class="field__hint">Esta voz no es tu clon. Orpheus solo cubre inglés o árabe, y parte las frases de más de 200 caracteres.</p>
           </div>
         </div>
       </article>

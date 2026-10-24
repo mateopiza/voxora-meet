@@ -22,15 +22,15 @@
 // un test que lo verifica.
 
 import { createHash } from 'node:crypto';
-import { DEFAULTS, MODEL_SETTING_KEYS, STT_PROVIDERS, TRANSLATE_PROVIDERS, PROVIDER_MODEL_DEFAULTS, sttModelFits, translateModelFits } from './settings-store.mjs';
+import { DEFAULTS, MODEL_SETTING_KEYS, STT_PROVIDERS, TRANSLATE_PROVIDERS, TTS_PROVIDERS, PROVIDER_MODEL_DEFAULTS, OPENAI_TTS_VOICES, GROQ_TTS_VOICES, sttModelFits, translateModelFits } from './settings-store.mjs';
 import { friendlyError } from './errors.mjs';
-import { sttPriceFor, chatPriceFor, ttsCostMultiplierFor, TTS_BASE_USD_PER_1K_CHARS } from '../../billing/src/index.mjs';
+import { sttPriceFor, chatPriceFor, ttsCostMultiplierFor, ttsPriceFor, TTS_BASE_USD_PER_1K_CHARS, REALTIME_USD_PER_HOUR_ESTIMATE } from '../../billing/src/index.mjs';
 
 export const MODELS_TTL_MS = 10 * 60_000;
 export const GROQ_MODELS_URL = 'https://api.groq.com/openai/v1/models';
 export const ELEVEN_MODELS_URL = 'https://api.elevenlabs.io/v1/models';
 export const OPENAI_MODELS_URL = 'https://api.openai.com/v1/models';
-export const PROVIDER_LABELS = Object.freeze({ groq: 'Groq', elevenlabs: 'ElevenLabs', openai: 'OpenAI' });
+export const PROVIDER_LABELS = Object.freeze({ groq: 'Groq', elevenlabs: 'ElevenLabs', openai: 'OpenAI', deepgram: 'Deepgram' });
 const FETCH_TIMEOUT_MS = 8_000;
 
 /** Defaults de los ajustes de modelo (los mismos de settings-store). */
@@ -66,6 +66,22 @@ const STT_META = {
     description: 'Generación anterior de Scribe; no admite términos clave del vocabulario.',
     order: 1,
   },
+  scribe_v2_realtime: {
+    label: 'Scribe v2 Realtime',
+    description: 'El mismo Scribe por WebSocket, sobre el turno ya cerrado. Sirve para comparar latencia con el Scribe por HTTP.',
+    order: 2,
+  },
+  'nova-3': {
+    label: 'Nova-3',
+    description: 'Deepgram Nova-3 en el idioma de origen. Recomendado para comparar con Whisper.',
+    recommended: true,
+    order: 0,
+  },
+  'nova-3-multi': {
+    label: 'Nova-3 multilingüe',
+    description: 'Nova-3 con detección de idioma (language=multi). Un poco más caro.',
+    order: 1,
+  },
   'gpt-4o-transcribe': {
     label: 'GPT-4o Transcribe',
     description: 'La transcripción más precisa de OpenAI. Recomendado.',
@@ -87,6 +103,7 @@ const STT_FALLBACK_DESCRIPTION = {
   groq: 'Modelo Whisper de Groq sin ficha propia.',
   elevenlabs: 'Modelo Scribe de ElevenLabs sin ficha propia.',
   openai: 'Modelo de transcripción de OpenAI sin ficha propia.',
+  deepgram: 'Modelo Nova de Deepgram sin ficha propia.',
 };
 
 // Familias de chat: el primer match gana.
@@ -175,8 +192,22 @@ const STATIC_GROQ = [
   { id: 'qwen/qwen3.8-27b', active: true, context_window: 131_072 },
   { id: 'qwen/qwen3.6-27b', active: true, context_window: 131_072 },
 ];
-// Scribe no aparece en `/v1/models` de ElevenLabs: lista curada (sin la variante realtime, que es por WebSocket).
-const SCRIBE_MODELS = [{ id: 'scribe_v2' }, { id: 'scribe_v1' }];
+// Scribe no aparece en `/v1/models` de ElevenLabs: lista curada. Realtime entra por WebSocket.
+const SCRIBE_MODELS = [{ id: 'scribe_v2' }, { id: 'scribe_v1' }, { id: 'scribe_v2_realtime' }];
+const DEEPGRAM_MODELS = [{ id: 'nova-3' }, { id: 'nova-3-multi' }];
+const OPENAI_TTS_MODELS = [
+  { id: 'gpt-4o-mini-tts', label: 'GPT-4o mini TTS', description: 'Voz de catálogo de OpenAI, con instrucciones de tono. No clona tu voz.', recommended: true, voices: OPENAI_TTS_VOICES },
+  { id: 'tts-1', label: 'TTS-1', description: 'Voz de catálogo, más barata. No clona tu voz.', voices: OPENAI_TTS_VOICES },
+  { id: 'tts-1-hd', label: 'TTS-1 HD', description: 'Voz de catálogo en alta definición. No clona tu voz.', voices: OPENAI_TTS_VOICES },
+];
+const GROQ_TTS_MODELS = [
+  { id: 'canopylabs/orpheus-v1-english', label: 'Orpheus inglés', description: 'Voz de catálogo en inglés (máx. 200 caracteres por frase). No clona tu voz.', recommended: true, voices: GROQ_TTS_VOICES['canopylabs/orpheus-v1-english'] },
+  { id: 'canopylabs/orpheus-arabic-saudi', label: 'Orpheus árabe', description: 'Voz de catálogo en árabe saudí. No clona tu voz.', voices: GROQ_TTS_VOICES['canopylabs/orpheus-arabic-saudi'] },
+];
+const REALTIME_CATALOG = [
+  { id: 'eleven_realtime_v1_max', label: 'Realtime Max', description: 'Agente de voz que escucha y responde ya traducido. Más calidad, más latencia. Estimado.', recommended: true },
+  { id: 'eleven_realtime_v1_mini', label: 'Realtime Mini', description: 'El mismo agente, afinado para latencia y costo. Estimado.', recommended: false },
+];
 const STATIC_OPENAI = [
   'gpt-4o-transcribe', 'gpt-4o-mini-transcribe', 'whisper-1',
   'gpt-4.1', 'gpt-4.1-mini', 'gpt-4.1-nano', 'gpt-4o', 'gpt-4o-mini',
@@ -220,6 +251,9 @@ export function ttsCapabilitiesFor(id) {
     caps.supportsSpeed = false;
     caps.supportsSpeakerBoost = s === 'eleven_v3_conversational';
     caps.stabilityPresets = [0, 0.5, 1];
+  } else if (/^eleven_v4/.test(s)) {
+    caps.supportsLanguageCode = true;
+    caps.supportsSpeed = true;
   }
   return caps;
 }
@@ -370,26 +404,74 @@ function sortModels(list) {
  * OpenAI. `stt` y `translate` son las del proveedor elegido (las mismas listas
  * que `sttByProvider[sttProvider]` y `translateByProvider[translateProvider]`).
  */
+function describeStockTts(raw, provider) {
+  const id = String(raw.id);
+  const price = ttsPriceFor(id);
+  return {
+    id,
+    provider,
+    label: raw.label ?? id,
+    description: raw.description,
+    recommended: Boolean(raw.recommended),
+    supportsReasoningEffort: false,
+    reasoningEfforts: [],
+    price: { unit: '1k caracteres', usd: price.usdPer1k },
+    voices: raw.voices ? [...raw.voices] : [],
+    supportsStyle: false,
+    supportsSpeakerBoost: false,
+    supportsLanguageCode: false,
+    supportsSpeed: false,
+    supportsNormalizationOn: false,
+    stabilityPresets: null,
+    clone: false,
+    available: true,
+    source: 'static',
+    order: raw.recommended ? 0 : 1,
+  };
+}
+
+function describeRealtime(raw) {
+  return {
+    id: raw.id,
+    provider: 'elevenlabs',
+    label: raw.label,
+    description: raw.description,
+    recommended: Boolean(raw.recommended),
+    price: { unit: 'hora de audio', usd: REALTIME_USD_PER_HOUR_ESTIMATE[raw.id], estimated: true },
+    available: true,
+    source: 'static',
+    order: raw.recommended ? 0 : 1,
+  };
+}
+
 export function buildCatalog({
   groq = [], elevenlabs = [], openai = [],
   groqSource = 'live', elevenSource = 'live', openaiSource = 'live',
-  sttProvider = DEFAULTS.sttProvider, translateProvider = DEFAULTS.translateProvider,
+  sttProvider = DEFAULTS.sttProvider, translateProvider = DEFAULTS.translateProvider, ttsProvider = DEFAULTS.ttsProvider,
 } = {}) {
   const sttByProvider = {
     groq: sortModels(groq.filter(isSttCandidate).map((m) => describeSttModel(m, groqSource, 'groq'))),
     elevenlabs: sortModels(SCRIBE_MODELS.map((m) => describeSttModel(m, elevenSource, 'elevenlabs'))),
     openai: sortModels(openai.filter(isOpenAiSttCandidate).map((m) => describeSttModel(m, openaiSource, 'openai'))),
+    deepgram: sortModels(DEEPGRAM_MODELS.map((m) => describeSttModel(m, 'static', 'deepgram'))),
   };
   const translateByProvider = {
     groq: sortModels(groq.filter(isTranslateCandidate).map((m) => describeTranslateModel(m, groqSource, 'groq'))),
     openai: sortModels(openai.filter(isOpenAiTranslateCandidate).map((m) => describeTranslateModel(m, openaiSource, 'openai'))),
   };
+  const ttsByProvider = {
+    elevenlabs: sortModels(elevenlabs.filter(isTtsCandidate).map((m) => describeTtsModel(m, elevenSource))),
+    openai: sortModels(OPENAI_TTS_MODELS.map((m) => describeStockTts(m, 'openai'))),
+    groq: sortModels(GROQ_TTS_MODELS.map((m) => describeStockTts(m, 'groq'))),
+  };
   return {
     stt: sttByProvider[sttProvider] ?? sttByProvider.groq,
     translate: translateByProvider[translateProvider] ?? translateByProvider.groq,
-    tts: sortModels(elevenlabs.filter(isTtsCandidate).map((m) => describeTtsModel(m, elevenSource))),
+    tts: ttsByProvider[ttsProvider] ?? ttsByProvider.elevenlabs,
+    realtime: sortModels(REALTIME_CATALOG.map(describeRealtime)),
     sttByProvider,
     translateByProvider,
+    ttsByProvider,
   };
 }
 
@@ -485,22 +567,29 @@ export class ModelCatalog {
     const sections = { groq, elevenlabs, openai };
     const sttProvider = STT_PROVIDERS.includes(settings?.sttProvider) ? settings.sttProvider : DEFAULTS.sttProvider;
     const translateProvider = TRANSLATE_PROVIDERS.includes(settings?.translateProvider) ? settings.translateProvider : DEFAULTS.translateProvider;
+    const ttsProvider = TTS_PROVIDERS.includes(settings?.ttsProvider) ? settings.ttsProvider : DEFAULTS.ttsProvider;
     const catalog = buildCatalog({
       groq: groq.raw, elevenlabs: elevenlabs.raw, openai: openai.raw,
       groqSource: groq.source, elevenSource: elevenlabs.source, openaiSource: openai.source,
-      sttProvider, translateProvider,
+      sttProvider, translateProvider, ttsProvider,
     });
 
     if (settings) {
-      const sttSource = sections[sttProvider].source;
-      const translateSource = sections[translateProvider].source;
+      const sttSource = sections[sttProvider]?.source ?? 'static';
+      const translateSource = sections[translateProvider]?.source ?? 'static';
+      const ttsSource = ttsProvider === 'elevenlabs' ? elevenlabs.source : 'static';
       ensureSelected(catalog.stt, settings.sttModel, sttSource, (id) => describeSttModel({ id }, sttSource, sttProvider));
       ensureSelected(catalog.translate, settings.translateModel, translateSource, (id) => describeTranslateModel({ id }, translateSource, translateProvider));
-      ensureSelected(catalog.tts, settings.ttsModel, elevenlabs.source, (id) => describeTtsModel({ model_id: id }, elevenlabs.source));
+      ensureSelected(catalog.tts, settings.ttsModel, ttsSource, (id) => (
+        ttsProvider === 'elevenlabs' ? describeTtsModel({ model_id: id }, ttsSource) : describeStockTts({ id, label: id, description: 'Voz de catálogo sin ficha propia.' }, ttsProvider)
+      ));
     }
 
-    // Solo cuentan los proveedores en uso: una key de OpenAI sin poner no deja el catálogo «sin conexión».
-    const inUse = [...new Set([sttProvider, translateProvider, 'elevenlabs'])];
+    // Solo cuentan los proveedores que se consultan en vivo. Deepgram es catálogo curado.
+    const dubbingPath = settings?.dubbingPath === 'eleven_realtime' ? 'eleven_realtime' : 'staged';
+    const inUse = dubbingPath === 'eleven_realtime'
+      ? ['elevenlabs']
+      : [...new Set([sttProvider, translateProvider, ttsProvider].filter((p) => sections[p]))];
     const liveTimes = inUse.map((p) => sections[p].fetchedAt).filter(Number.isFinite);
     const errors = {};
     for (const p of inUse) if (sections[p].error) errors[p] = sections[p].error;
@@ -510,8 +599,15 @@ export class ModelCatalog {
       providers: {
         stt: [...STT_PROVIDERS],
         translate: [...TRANSLATE_PROVIDERS],
+        tts: [...TTS_PROVIDERS],
+        paths: ['staged', 'eleven_realtime'],
         labels: { ...PROVIDER_LABELS },
-        defaults: { stt: { ...PROVIDER_MODEL_DEFAULTS.stt }, translate: { ...PROVIDER_MODEL_DEFAULTS.translate } },
+        defaults: {
+          stt: { ...PROVIDER_MODEL_DEFAULTS.stt },
+          translate: { ...PROVIDER_MODEL_DEFAULTS.translate },
+          tts: { ...PROVIDER_MODEL_DEFAULTS.tts },
+          realtime: PROVIDER_MODEL_DEFAULTS.realtime,
+        },
       },
       offline: inUse.some((p) => sections[p].source !== 'live'),
       fetchedAt: new Date(liveTimes.length ? Math.min(...liveTimes) : this.now()).toISOString(),
@@ -523,6 +619,8 @@ export class ModelCatalog {
   /** Ficha del modelo TTS: última lista en vivo si la hay, si no el respaldo curado. */
   ttsInfo(modelId = DEFAULTS.ttsModel) {
     const id = String(modelId || DEFAULTS.ttsModel);
+    const stock = [...OPENAI_TTS_MODELS, ...GROQ_TTS_MODELS].find((m) => m.id === id);
+    if (stock) return describeStockTts(stock, stock.id.startsWith('canopylabs/') ? 'groq' : 'openai');
     const live = this.#lastLive.elevenlabs?.find((m) => m?.model_id === id);
     if (live) return describeTtsModel(live, 'live');
     return describeTtsModel(STATIC_ELEVEN.find((m) => m.model_id === id) ?? { model_id: id }, 'static');

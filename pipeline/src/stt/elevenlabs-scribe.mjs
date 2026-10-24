@@ -94,6 +94,7 @@ export class ElevenLabsScribeStt {
     this.#apiKey = apiKey;
     this.#fetch = fetchImpl;
     this.provider = "elevenlabs";
+    this.clientKind = "scribe";
     this.model = String(model || DEFAULT_SCRIBE_MODEL);
     this.temperature = clampSttTemperature(temperature);
     this.language = normalizeLanguage(language);

@@ -56,5 +56,10 @@ const results = await Promise.all([
     if (missing.length) throw new Error(`modelos no disponibles: ${missing.join(', ')}`);
     return need.join(' + ');
   })] : []),
+  ...(process.env.DEEPGRAM_API_KEY ? [check('Deepgram (STT Nova-3, opcional)', async () => {
+    const res = await fetch('https://api.deepgram.com/v1/projects', { headers: { Authorization: `Token ${process.env.DEEPGRAM_API_KEY}` } });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    return 'key válida';
+  })] : []),
 ]);
 process.exit(results.every(Boolean) ? 0 : 1);

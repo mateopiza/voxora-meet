@@ -4,8 +4,55 @@ import { EventEmitter } from 'node:events';
 import { PassThrough } from 'node:stream';
 import { SessionController, SampleClock } from '../engine/session-controller.mjs';
 import { SyncBuffer } from '../../sync-buffer/src/sync-buffer.mjs';
+import { MicCapture } from '../../capture/src/mic-capture.mjs';
 
 const tick = () => new Promise((r) => setImmediate(r));
+
+test('fixed mode reserves processing time, bounds capture and preserves the mode until session restart', async () => {
+  const { deps, settings, mic, pipeline, clock, created } = makeDeps();
+  settings.delayMs = 6000; settings.segmentationMode = 'fixed';
+  const limits = [];
+  mic.setSegmenterLimits = (patch) => limits.push(patch);
+  const controller = new SessionController(deps);
+  const events = collect(controller);
+  await controller.start();
+  assert.equal(created.micOpts.segmenter.fixedWindowMs, 2400);
+  assert.equal(limits.at(-1).fixedWindowMs, 2400);
+  pipeline.next = (turn) => ({ audioDub: Buffer.alloc(960), sampleRate: 48000,
+    sourceTimestamp: turn.startedAt, sourceEndedAt: turn.endedAt, readyAt: turn.capturedUntil + 500 });
+  const now = clock.now();
+  mic.emit('turn', { pcm: Buffer.alloc(16000), sampleRate: 16000, startedAt: now - 1000,
+    endedAt: now - 700, capturedUntil: now - 600, voicedMs: 300 });
+  await tick(); await tick();
+  assert.equal(controller.stats().latencyP95Ms, 500, 'capture tail is not provider latency');
+  assert.equal(limits.at(-1).fixedWindowMs, 4000);
+  controller.applyLiveSettings({ segmentationMode: 'pause' });
+  assert.equal(controller.stats().segmentationMode, 'fixed');
+  controller.setDelay(2000);
+  assert.equal(limits.at(-1).fixedWindowMs, 800);
+  assert.equal(controller.stats().recommendedDelayMs, 2000);
+  assert.equal(events.filter((event) => event.data.kind === 'latency-budget').length, 0);
+  await controller.stop();
+});
+
+test('continuous PCM through real MicCapture reaches the session pipeline without waiting for silence', async () => {
+  const source = Object.assign(new PassThrough(), { sampleRate: 16000 });
+  const { deps, settings, clock, pipeline } = makeDeps();
+  settings.delayMs = 6000; settings.segmentationMode = 'fixed'; settings.fallbackMode = 'silence';
+  deps.createAudioSource = async () => source;
+  deps.createMicCapture = (opts) => new MicCapture({ ...opts, clock: clock.now });
+  const controller = new SessionController(deps); collect(controller);
+  await controller.start();
+  const pcm = Buffer.alloc(2400 * 32);
+  for (let offset = 0; offset < pcm.length; offset += 2) pcm.writeInt16LE(12000, offset);
+  for (let index = 0; index < 2; index++) {
+    clock.advance(2400); source.write(pcm); await tick(); await tick();
+  }
+  assert.equal(pipeline.calls.length, 2);
+  assert.deepEqual(pipeline.calls.map((turn) => [turn.startedAt, turn.capturedUntil]), [[10000, 12400], [12400, 14800]]);
+  assert.equal(pipeline.calls[0].reason, 'window');
+  await controller.stop();
+});
 
 test('stop during pending startup prevents capture and closes the newly opened endpoint', async () => {
   let release;
@@ -237,6 +284,7 @@ test('start usa la salida resuelta, avisa del fallback y duplica el audio al mon
 
 test('presupuesto de frase: limita maxTurnMs al delay y se recalibra con la latencia medida', async () => {
   const { deps, mic, settings, pipeline, clock } = makeDeps();
+  settings.segmentationMode = 'pause';
   settings.delayMs = 6000;
   const limits = [];
   mic.setSegmenterLimits = (patch) => { limits.push(patch); return patch; };
@@ -256,5 +304,33 @@ test('presupuesto de frase: limita maxTurnMs al delay y se recalibra con la late
   // Con delay mínimo nunca baja de 1,5 s.
   c.setDelay(2000);
   assert.equal(limits.at(-1).maxTurnMs, 1500);
+  await c.stop();
+});
+
+test('eleven realtime manda el PCM al agente y no llama a processTurn', async () => {
+  const { deps, mic, virtualMic, pipeline, settings } = makeDeps();
+  settings.dubbingPath = 'eleven_realtime';
+  settings.voiceName = 'Ana';
+  const rt = Object.assign(new EventEmitter(), {
+    pcm: [],
+    pushPcm(buf) { this.pcm.push(buf); },
+    async close() {},
+  });
+  deps.createPipeline = () => rt;
+  const c = new SessionController(deps);
+  const events = collect(c);
+  await c.start();
+  const chunk = Buffer.alloc(640);
+  mic.emit('pcm', chunk);
+  mic.emit('turn', { pcm: chunk, sampleRate: 16000, startedAt: 1, endedAt: 2 });
+  await tick();
+  assert.equal(rt.pcm.length, 1);
+  assert.equal(pipeline.calls.length, 0);
+  const pcm = Buffer.alloc(960);
+  rt.emit('audio', { pcm, sampleRate: 48000 });
+  rt.emit('segment', { turnId: 1, durationMs: 20, metrics: { totalMs: 400 }, cost: { stt: 1, translate: 0, tts: 0, totalVox: 1 } });
+  await tick();
+  assert.equal(virtualMic.written.length, 1);
+  assert.equal(events.some((event) => event.event === 'dub' && event.data.metrics.totalMs === 400), true);
   await c.stop();
 });

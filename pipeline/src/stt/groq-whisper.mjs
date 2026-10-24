@@ -241,6 +241,7 @@ export class GroqWhisperStt {
     this.#apiKey = apiKey;
     this.#fetch = fetchImpl;
     this.provider = WHISPER_API_PROVIDERS[provider] ? provider : "groq";
+    this.clientKind = this.provider;
     this.providerLabel = info.label;
     this.model = String(model || info.model);
     this.temperature = clampSttTemperature(temperature);
