@@ -971,6 +971,12 @@ CMakeFiles\VoxoraMeetVCam.dir\vcam-source\frame_source.cpp.obj: "D:\Escritorio\d
 CMakeFiles\VoxoraMeetVCam.dir\vcam-source\frame_source.cpp.obj: "C:\Program Files (x86)\Windows Kits\10\include\10.0.26100.0\shared\sddl.h"
 CMakeFiles\VoxoraMeetVCam.dir\vcam-source\frame_source.cpp.obj: "D:\Escritorio\dev\VoXoRA\CORE\05 VOXORA Meet\windows-camera\native\common\vcam_shared.h"
 CMakeFiles\VoxoraMeetVCam.dir\vcam-source\frame_source.cpp.obj: "D:\Escritorio\dev\VoXoRA\CORE\05 VOXORA Meet\windows-camera\native\vcam-source\fallback_frame.h"
+CMakeFiles\VoxoraMeetVCam.dir\vcam-source\frame_source.cpp.obj: "D:\Escritorio\dev\VoXoRA\CORE\05 VOXORA Meet\windows-camera\native\vcam-source\..\common\nv12.h"
+CMakeFiles\VoxoraMeetVCam.dir\vcam-source\frame_source.cpp.obj: "C:\Program Files\Microsoft Visual Studio\18\Community\VC\Tools\MSVC\14.51.36231\include\algorithm"
+CMakeFiles\VoxoraMeetVCam.dir\vcam-source\frame_source.cpp.obj: "C:\Program Files\Microsoft Visual Studio\18\Community\VC\Tools\MSVC\14.51.36231\include\__msvc_heap_algorithms.hpp"
+CMakeFiles\VoxoraMeetVCam.dir\vcam-source\frame_source.cpp.obj: "C:\Program Files\Microsoft Visual Studio\18\Community\VC\Tools\MSVC\14.51.36231\include\__msvc_int128.hpp"
+CMakeFiles\VoxoraMeetVCam.dir\vcam-source\frame_source.cpp.obj: "C:\Program Files\Microsoft Visual Studio\18\Community\VC\Tools\MSVC\14.51.36231\include\__msvc_minmax.hpp"
+CMakeFiles\VoxoraMeetVCam.dir\vcam-source\frame_source.cpp.obj: "C:\Program Files\Microsoft Visual Studio\18\Community\VC\Tools\MSVC\14.51.36231\include\cmath"
 CMakeFiles\VoxoraMeetVCam.dir\vcam-source\frame_source.cpp.obj: "D:\Escritorio\dev\VoXoRA\CORE\05 VOXORA Meet\windows-camera\native\vcam-source\pixel_convert.h"
 
 
@@ -1641,6 +1647,10 @@ CMakeFiles\VoxoraMeetVCam.dir\vcam-source\media_stream.cpp.obj: "D:\Escritorio\d
 CMakeFiles\VoxoraMeetVCam.dir\vcam-source\media_stream.cpp.obj: "C:\Program Files (x86)\Windows Kits\10\include\10.0.26100.0\shared\ks.h"
 CMakeFiles\VoxoraMeetVCam.dir\vcam-source\media_stream.cpp.obj: "C:\Program Files (x86)\Windows Kits\10\include\10.0.26100.0\shared\pshpack1.h"
 CMakeFiles\VoxoraMeetVCam.dir\vcam-source\media_stream.cpp.obj: "C:\Program Files (x86)\Windows Kits\10\include\10.0.26100.0\shared\poppack.h"
+CMakeFiles\VoxoraMeetVCam.dir\vcam-source\media_stream.cpp.obj: "C:\Program Files\Microsoft Visual Studio\18\Community\VC\Tools\MSVC\14.51.36231\include\algorithm"
+CMakeFiles\VoxoraMeetVCam.dir\vcam-source\media_stream.cpp.obj: "C:\Program Files\Microsoft Visual Studio\18\Community\VC\Tools\MSVC\14.51.36231\include\__msvc_heap_algorithms.hpp"
+CMakeFiles\VoxoraMeetVCam.dir\vcam-source\media_stream.cpp.obj: "C:\Program Files\Microsoft Visual Studio\18\Community\VC\Tools\MSVC\14.51.36231\include\__msvc_int128.hpp"
+CMakeFiles\VoxoraMeetVCam.dir\vcam-source\media_stream.cpp.obj: "C:\Program Files\Microsoft Visual Studio\18\Community\VC\Tools\MSVC\14.51.36231\include\__msvc_minmax.hpp"
 CMakeFiles\VoxoraMeetVCam.dir\vcam-source\media_stream.cpp.obj: "C:\Program Files (x86)\Windows Kits\10\include\10.0.26100.0\shared\ksmedia.h"
 CMakeFiles\VoxoraMeetVCam.dir\vcam-source\media_stream.cpp.obj: "C:\Program Files (x86)\Windows Kits\10\include\10.0.26100.0\shared\pshpack1.h"
 CMakeFiles\VoxoraMeetVCam.dir\vcam-source\media_stream.cpp.obj: "C:\Program Files (x86)\Windows Kits\10\include\10.0.26100.0\shared\poppack.h"
@@ -1740,10 +1750,12 @@ CMakeFiles\VoxoraMeetVCam.dir\vcam-source\pixel_convert.cpp.obj: "C:\Program Fil
 CMakeFiles\VoxoraMeetVCam.dir\vcam-source\pixel_convert.cpp.obj: "C:\Program Files (x86)\Windows Kits\10\include\10.0.26100.0\ucrt\corecrt_memory.h"
 CMakeFiles\VoxoraMeetVCam.dir\vcam-source\pixel_convert.cpp.obj: "C:\Program Files\Microsoft Visual Studio\18\Community\VC\Tools\MSVC\14.51.36231\include\xpolymorphic_allocator.h"
 CMakeFiles\VoxoraMeetVCam.dir\vcam-source\pixel_convert.cpp.obj: "C:\Program Files\Microsoft Visual Studio\18\Community\VC\Tools\MSVC\14.51.36231\include\tuple"
+CMakeFiles\VoxoraMeetVCam.dir\vcam-source\pixel_convert.cpp.obj: "D:\Escritorio\dev\VoXoRA\CORE\05 VOXORA Meet\windows-camera\native\vcam-source\..\common\nv12.h"
 CMakeFiles\VoxoraMeetVCam.dir\vcam-source\pixel_convert.cpp.obj: "C:\Program Files\Microsoft Visual Studio\18\Community\VC\Tools\MSVC\14.51.36231\include\algorithm"
 CMakeFiles\VoxoraMeetVCam.dir\vcam-source\pixel_convert.cpp.obj: "C:\Program Files\Microsoft Visual Studio\18\Community\VC\Tools\MSVC\14.51.36231\include\__msvc_heap_algorithms.hpp"
 CMakeFiles\VoxoraMeetVCam.dir\vcam-source\pixel_convert.cpp.obj: "C:\Program Files\Microsoft Visual Studio\18\Community\VC\Tools\MSVC\14.51.36231\include\__msvc_int128.hpp"
 CMakeFiles\VoxoraMeetVCam.dir\vcam-source\pixel_convert.cpp.obj: "C:\Program Files\Microsoft Visual Studio\18\Community\VC\Tools\MSVC\14.51.36231\include\__msvc_minmax.hpp"
+CMakeFiles\VoxoraMeetVCam.dir\vcam-source\pixel_convert.cpp.obj: "C:\Program Files\Microsoft Visual Studio\18\Community\VC\Tools\MSVC\14.51.36231\include\cmath"
 
 
 
@@ -2308,6 +2320,10 @@ CMakeFiles\VoxoraMeetVCam.dir\vcam-source\pixel_convert.cpp.obj: "C:\Program Fil
 "C:\Program Files\Microsoft Visual Studio\18\Community\VC\Tools\MSVC\14.51.36231\include\__msvc_minmax.hpp":
 
 "D:\Escritorio\dev\VoXoRA\CORE\05 VOXORA Meet\windows-camera\native\vcam-source\frame_source.cpp":
+
+"D:\Escritorio\dev\VoXoRA\CORE\05 VOXORA Meet\windows-camera\native\vcam-source\..\common\nv12.h":
+
+"C:\Program Files\Microsoft Visual Studio\18\Community\VC\Tools\MSVC\14.51.36231\include\cmath":
 
 "D:\Escritorio\dev\VoXoRA\CORE\05 VOXORA Meet\windows-camera\native\vcam-source\media_stream.cpp":
 

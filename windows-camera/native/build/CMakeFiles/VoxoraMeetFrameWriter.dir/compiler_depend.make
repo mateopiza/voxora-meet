@@ -206,6 +206,12 @@ CMakeFiles\VoxoraMeetFrameWriter.dir\frame-writer\main.cpp.obj: "C:\Program File
 CMakeFiles\VoxoraMeetFrameWriter.dir\frame-writer\main.cpp.obj: "C:\Program Files\Microsoft Visual Studio\18\Community\VC\Tools\MSVC\14.51.36231\include\vector"
 CMakeFiles\VoxoraMeetFrameWriter.dir\frame-writer\main.cpp.obj: "C:\Program Files\Microsoft Visual Studio\18\Community\VC\Tools\MSVC\14.51.36231\include\__msvc_bit_utils.hpp"
 CMakeFiles\VoxoraMeetFrameWriter.dir\frame-writer\main.cpp.obj: "D:\Escritorio\dev\VoXoRA\CORE\05 VOXORA Meet\windows-camera\native\frame-writer\..\common\frame_producer.h"
+CMakeFiles\VoxoraMeetFrameWriter.dir\frame-writer\main.cpp.obj: "D:\Escritorio\dev\VoXoRA\CORE\05 VOXORA Meet\windows-camera\native\common\nv12.h"
+CMakeFiles\VoxoraMeetFrameWriter.dir\frame-writer\main.cpp.obj: "C:\Program Files\Microsoft Visual Studio\18\Community\VC\Tools\MSVC\14.51.36231\include\algorithm"
+CMakeFiles\VoxoraMeetFrameWriter.dir\frame-writer\main.cpp.obj: "C:\Program Files\Microsoft Visual Studio\18\Community\VC\Tools\MSVC\14.51.36231\include\__msvc_heap_algorithms.hpp"
+CMakeFiles\VoxoraMeetFrameWriter.dir\frame-writer\main.cpp.obj: "C:\Program Files\Microsoft Visual Studio\18\Community\VC\Tools\MSVC\14.51.36231\include\__msvc_int128.hpp"
+CMakeFiles\VoxoraMeetFrameWriter.dir\frame-writer\main.cpp.obj: "C:\Program Files\Microsoft Visual Studio\18\Community\VC\Tools\MSVC\14.51.36231\include\__msvc_minmax.hpp"
+CMakeFiles\VoxoraMeetFrameWriter.dir\frame-writer\main.cpp.obj: "C:\Program Files\Microsoft Visual Studio\18\Community\VC\Tools\MSVC\14.51.36231\include\cmath"
 CMakeFiles\VoxoraMeetFrameWriter.dir\frame-writer\main.cpp.obj: "D:\Escritorio\dev\VoXoRA\CORE\05 VOXORA Meet\windows-camera\native\common\shared_memory.h"
 CMakeFiles\VoxoraMeetFrameWriter.dir\frame-writer\main.cpp.obj: "C:\Program Files (x86)\Windows Kits\10\include\10.0.26100.0\shared\sddl.h"
 CMakeFiles\VoxoraMeetFrameWriter.dir\frame-writer\main.cpp.obj: "D:\Escritorio\dev\VoXoRA\CORE\05 VOXORA Meet\windows-camera\native\common\vcam_shared.h"
@@ -285,6 +291,8 @@ CMakeFiles\VoxoraMeetFrameWriter.dir\frame-writer\main.cpp.obj: "D:\Escritorio\d
 "C:\Program Files (x86)\Windows Kits\10\include\10.0.26100.0\shared\basetsd.h":
 
 "C:\Program Files (x86)\Windows Kits\10\include\10.0.26100.0\shared\guiddef.h":
+
+"C:\Program Files\Microsoft Visual Studio\18\Community\VC\Tools\MSVC\14.51.36231\include\__msvc_int128.hpp":
 
 "C:\Program Files (x86)\Windows Kits\10\include\10.0.26100.0\ucrt\string.h":
 
@@ -403,6 +411,8 @@ CMakeFiles\VoxoraMeetFrameWriter.dir\frame-writer\main.cpp.obj: "D:\Escritorio\d
 "C:\Program Files (x86)\Windows Kits\10\include\10.0.26100.0\um\stringapiset.h":
 
 "C:\Program Files (x86)\Windows Kits\10\include\10.0.26100.0\um\wincon.h":
+
+"D:\Escritorio\dev\VoXoRA\CORE\05 VOXORA Meet\windows-camera\native\common\nv12.h":
 
 "C:\Program Files (x86)\Windows Kits\10\include\10.0.26100.0\um\wincontypes.h":
 
@@ -569,6 +579,14 @@ CMakeFiles\VoxoraMeetFrameWriter.dir\frame-writer\main.cpp.obj: "D:\Escritorio\d
 "C:\Program Files\Microsoft Visual Studio\18\Community\VC\Tools\MSVC\14.51.36231\include\cctype":
 
 "C:\Program Files\Microsoft Visual Studio\18\Community\VC\Tools\MSVC\14.51.36231\include\__msvc_bit_utils.hpp":
+
+"C:\Program Files\Microsoft Visual Studio\18\Community\VC\Tools\MSVC\14.51.36231\include\algorithm":
+
+"C:\Program Files\Microsoft Visual Studio\18\Community\VC\Tools\MSVC\14.51.36231\include\__msvc_heap_algorithms.hpp":
+
+"C:\Program Files\Microsoft Visual Studio\18\Community\VC\Tools\MSVC\14.51.36231\include\__msvc_minmax.hpp":
+
+"C:\Program Files\Microsoft Visual Studio\18\Community\VC\Tools\MSVC\14.51.36231\include\cmath":
 
 "D:\Escritorio\dev\VoXoRA\CORE\05 VOXORA Meet\windows-camera\native\common\shared_memory.h":
 

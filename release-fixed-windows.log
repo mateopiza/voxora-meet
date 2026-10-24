@@ -1,0 +1,31 @@
+
+▶ VOXORA Meet 0.3.2 (sin firma)
+
+▶ Sin compilar (--no-build): se usan los binarios existentes
+
+▶ Layout dist\VOXORA-Meet-0.3.2
+Motor: 28 módulos → engine/engine.mjs (302 KB → 343 KB ofuscado)
+UI: 19 módulos JS ofuscados, 27 recursos copiados
+Node.js 24.21.0 (caché) → node/node.exe
+
+▶ Empaquetando e integrando el instalador
+VXPK: 55 archivos, 97626751 ? 32522867 bytes, 6 bloques
+Instalador: dist\VOXORA-Meet-Setup-0.3.2.exe (31.8 MB)
+Resumen: dist\VOXORA-Meet-0.3.2.release.json (SHA256 del instalador 4145d3a5f7f62006f3ca967711b0fe251a8d57b0b95ec3090db41fb9b862d02a)
+
+▶ Verificando
+  ✔ layout completo (55 archivos)
+  ✔ sin pdb/map/pruebas/fuentes
+  ✔ 20 archivos JS, todos ofuscados
+  ✔ ninguna credencial S3 en el layout ni en el instalador
+  ✔ canal de actualizaciones: https://s3.g.megas4.com/voxora-meet/voxora-meet-updates/latest.json
+  ✔ VERSIONINFO 0.3.2 en 8 binarios
+  ✔ motor empaquetado responde ping (Node v24.21.0)
+  ✔ grafo de módulos de la UI completo y sintácticamente válido
+  ✔ UI empaquetada carga en Edge headless (1536 elementos; app/ui: 1536)
+  ✔ node\node.exe conserva la firma oficial de Node.js
+  ! 8/8 binarios propios sin firmar (build --no-sign: no publicar)
+  ✔ el instalador extrae exactamente el layout (55 archivos, SHA256 verificado)
+  verify-release OK (1 aviso(s))
+
+✔ Listo: dist\VOXORA-Meet-Setup-0.3.2.exe (SIN FIRMA: no publicar)

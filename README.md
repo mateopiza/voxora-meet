@@ -1,5 +1,7 @@
 # VOXORA Meet
 
+La versión **0.3.2** incorpora **Ventanas sincronizadas**, seleccionables junto al modo por pausas. Ver [timeline de segmentos y validación](docs/SEGMENT-TIMELINE.md).
+
 **Doblaje profesional con voz clonada para videollamadas** — Google Meet, Zoom, Teams, Discord y
 cualquier app de videoconferencia.
 

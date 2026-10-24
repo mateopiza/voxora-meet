@@ -328,6 +328,10 @@ D:/Escritorio/dev/VoXoRA/CORE/05 VOXORA Meet/windows-camera/native/vcam-source/f
 C:/Program Files (x86)/Windows Kits/10/include/10.0.26100.0/shared/ks.h
 C:/Program Files (x86)/Windows Kits/10/include/10.0.26100.0/shared/pshpack1.h
 C:/Program Files (x86)/Windows Kits/10/include/10.0.26100.0/shared/poppack.h
+C:/Program Files/Microsoft Visual Studio/18/Community/VC/Tools/MSVC/14.51.36231/include/algorithm
+C:/Program Files/Microsoft Visual Studio/18/Community/VC/Tools/MSVC/14.51.36231/include/__msvc_heap_algorithms.hpp
+C:/Program Files/Microsoft Visual Studio/18/Community/VC/Tools/MSVC/14.51.36231/include/__msvc_int128.hpp
+C:/Program Files/Microsoft Visual Studio/18/Community/VC/Tools/MSVC/14.51.36231/include/__msvc_minmax.hpp
 C:/Program Files (x86)/Windows Kits/10/include/10.0.26100.0/shared/ksmedia.h
 C:/Program Files (x86)/Windows Kits/10/include/10.0.26100.0/shared/pshpack1.h
 C:/Program Files (x86)/Windows Kits/10/include/10.0.26100.0/shared/poppack.h

@@ -1,6 +1,6 @@
 {
   "name": "voxora-meet",
-  "version": "0.3.3",
+  "version": "0.3.4",
   "private": true,
   "type": "module",
   "description": "VOXORA Meet — doblaje profesional con voz clonada para videollamadas (Google Meet). Calidad y fidelidad de voz por encima de latencia.",
