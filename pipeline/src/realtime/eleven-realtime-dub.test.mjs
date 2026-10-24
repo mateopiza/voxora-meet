@@ -49,6 +49,8 @@ test("Eleven Realtime abre con client secret y emite audio de 48 kHz", async () 
   dub.on("segment", (segment) => segments.push(segment));
   await dub.open();
   assert.equal(secretBody.session.model, "eleven_realtime_v1_max");
+  assert.equal(secretBody.session.audio.input.turn_detection.type, "semantic_vad");
+  assert.equal(secretBody.session.audio.input.turn_detection.eagerness, "medium");
   assert.equal(secretBody.session.audio.output.voice, "Ana");
   assert.equal(sockets[0].options.headers.Authorization, "Bearer secret-1");
 

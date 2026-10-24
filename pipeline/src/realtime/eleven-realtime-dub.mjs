@@ -171,7 +171,10 @@ export class ElevenRealtimeDub extends EventEmitter {
           output_modalities: ["audio"],
           max_duration_seconds: 600,
           audio: {
-            input: { format: { type: "audio/pcm", rate: 24000 }, turn_detection: { type: "server_vad" } },
+            input: {
+              format: { type: "audio/pcm", rate: 24000 },
+              turn_detection: { type: "semantic_vad", eagerness: "medium" },
+            },
             output: { format: { type: "audio/pcm", rate: 24000 }, voice: this.voice || "brian" },
           },
         },
