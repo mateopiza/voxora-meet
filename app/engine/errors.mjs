@@ -50,7 +50,7 @@ function providerOf(error, text) {
 const PASSTHROUGH = new Set([
   'missing_key', 'provider_auth', 'provider_payment', 'provider_quota', 'virtual_mic_missing',
   'voice_missing', 'samples_too_short', 'bad_request', 'bad_state', 'unknown_command', 'module_missing',
-  'clone_failed', 'model_unavailable',
+  'clone_failed', 'model_unavailable', 'invalid_voice_id',
   'audio_route_invalid', 'audio_output_closed', 'audio_output_overload', 'audio_output_timeout', 'audio_capture_closed',
 ]);
 
@@ -119,6 +119,13 @@ export function friendlyError(error) {
     return {
       code: 'provider_auth',
       message: `${who} no aceptó la API key. Revísala en Ajustes.`,
+      detail,
+    };
+  }
+  if (/invalid_voice_id|unknown voice/i.test(text)) {
+    return {
+      code: 'invalid_voice_id',
+      message: 'Eleven Realtime no acepta el nombre visible de la voz y no lo cambia por un alias corto. Usa el voice_id de tu biblioteca de ElevenLabs. Si es una voz propia, depositarla puede exigir horas mínimas de audio y que el entrenamiento haya terminado.',
       detail,
     };
   }

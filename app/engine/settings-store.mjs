@@ -20,13 +20,14 @@ export const SETTINGS_FILE = 'settings.json';
 export const PROVIDER_KEYS_FILE = 'provider-keys.dpapi';
 
 // groq: STT (Whisper), traducción (chat) y TTS Orpheus. elevenlabs: TTS clonado, Scribe y Realtime.
-// openai: traducción, STT y TTS. deepgram: solo STT. Hace falta la key de cada proveedor en uso.
+// openai: traducción, STT y TTS. deepgram: STT y TTS (Aura/Flux). No tiene modelo de chat.
+// Hace falta la key de cada proveedor en uso.
 export const PROVIDER_KEY_NAMES = Object.freeze(['groq', 'elevenlabs', 'openai', 'deepgram']);
 
 /** Proveedores que puede usar cada etapa. */
 export const STT_PROVIDERS = Object.freeze(['groq', 'elevenlabs', 'openai', 'deepgram']);
 export const TRANSLATE_PROVIDERS = Object.freeze(['groq', 'openai']);
-export const TTS_PROVIDERS = Object.freeze(['elevenlabs', 'openai', 'groq']);
+export const TTS_PROVIDERS = Object.freeze(['elevenlabs', 'openai', 'groq', 'deepgram']);
 /** `staged` = STT + traducción + TTS. `eleven_realtime` = un agente speech-to-speech. */
 export const DUBBING_PATHS = Object.freeze(['staged', 'eleven_realtime']);
 export const REALTIME_MODELS = Object.freeze(['eleven_realtime_v1_max', 'eleven_realtime_v1_mini']);
@@ -35,12 +36,18 @@ export const GROQ_TTS_VOICES = Object.freeze({
   'canopylabs/orpheus-v1-english': Object.freeze(['troy', 'austin', 'daniel', 'autumn', 'diana', 'hannah']),
   'canopylabs/orpheus-arabic-saudi': Object.freeze(['abdullah', 'fahad', 'sultan', 'lulwa', 'noura', 'aisha']),
 });
+/** Voz documentada por familia si la guardada no pertenece a esa familia. El catálogo en vivo manda. */
+export const DEEPGRAM_TTS_VOICE_DEFAULTS = Object.freeze({
+  'aura-2': 'aura-2-thalia-en',
+  aura: 'aura-asteria-en',
+  flux: 'flux-alexis-en',
+});
 
 /** Modelo que se usa al cambiar de proveedor (o si el guardado no es de ese proveedor). */
 export const PROVIDER_MODEL_DEFAULTS = Object.freeze({
   stt: Object.freeze({ groq: 'whisper-large-v3', elevenlabs: 'scribe_v2', openai: 'gpt-4o-transcribe', deepgram: 'nova-3' }),
   translate: Object.freeze({ groq: 'openai/gpt-oss-120b', openai: 'gpt-4.1' }),
-  tts: Object.freeze({ elevenlabs: 'eleven_multilingual_v2', openai: 'gpt-4o-mini-tts', groq: 'canopylabs/orpheus-v1-english' }),
+  tts: Object.freeze({ elevenlabs: 'eleven_multilingual_v2', openai: 'gpt-4o-mini-tts', groq: 'canopylabs/orpheus-v1-english', deepgram: 'aura-2' }),
   realtime: 'eleven_realtime_v1_max',
 });
 
@@ -94,10 +101,11 @@ export const DEFAULTS = Object.freeze({
   translateModel: 'openai/gpt-oss-120b',
   translateTemperature: 0.2,
   translateReasoningEffort: 'low',
-  ttsProvider: 'elevenlabs',      // 'elevenlabs' | 'openai' | 'groq'
+  ttsProvider: 'elevenlabs',      // 'elevenlabs' | 'openai' | 'groq' | 'deepgram'
   ttsModel: 'eleven_multilingual_v2',
   openaiTtsVoice: 'alloy',
   groqTtsVoice: 'troy',
+  deepgramTtsVoice: 'aura-2-thalia-en',
   dubbingPath: 'staged',          // 'staged' | 'eleven_realtime'
   realtimeModel: 'eleven_realtime_v1_max',
   ttsStability: 0.5,
@@ -112,7 +120,7 @@ export const DEFAULTS = Object.freeze({
 export const MODEL_SETTING_KEYS = Object.freeze([
   'sttProvider', 'sttModel', 'sttTemperature',
   'translateProvider', 'translateModel', 'translateTemperature', 'translateReasoningEffort', 'memoryTurns',
-  'ttsProvider', 'ttsModel', 'openaiTtsVoice', 'groqTtsVoice',
+  'ttsProvider', 'ttsModel', 'openaiTtsVoice', 'groqTtsVoice', 'deepgramTtsVoice',
   'ttsStability', 'ttsSimilarityBoost', 'ttsStyle', 'ttsSpeed', 'ttsSpeakerBoost', 'ttsTextNormalization',
   'dubbingPath', 'realtimeModel',
 ]);
@@ -183,15 +191,39 @@ export function cleanModelId(value, fallback, mustMatch = null) {
 export function sttModelFits(provider, id) {
   if (provider === 'elevenlabs') return /^(scribe_v1|scribe_v2|scribe_v2_realtime)$/i.test(id);
   if (provider === 'openai') return /^(whisper-1$|gpt-4o(-mini)?-transcribe)/i.test(id) && !/diarize/i.test(id);
-  if (provider === 'deepgram') return /^(nova-3|nova-3-multi)$/i.test(id);
+  if (provider === 'deepgram') return isDeepgramSttId(id);
   return /whisper/i.test(id) && id.toLowerCase() !== 'whisper-1';
+}
+
+/** Id de STT que el pregrabado de Deepgram puede guardar (el catálogo en vivo filtra cuáles hay). */
+export function isDeepgramSttId(id) {
+  const value = String(id ?? '');
+  if (/^(whisper-large-v3(-turbo)?|whisper-1|scribe_|gpt-|eleven_|tts-|canopylabs\/)/i.test(value)) return false;
+  return /^(nova-3-multi|nova(?:-[a-z0-9]+)*|enhanced(?:-[a-z0-9]+)*|base(?:-[a-z0-9]+)*|flux-general(?:-[a-z0-9]+)*|general-nova(?:-[a-z0-9]+)*|(?:meeting|phonecall|finance|voicemail|conversationalai)(?:-[a-z0-9]+)*)$/i.test(value);
+}
+
+/** Familia de voz Deepgram a partir del id de modelo o de la voz (`aura-2-thalia-en`). */
+export function deepgramTtsFamily(id) {
+  const value = String(id ?? '').toLowerCase();
+  if (value === 'aura-2' || value.startsWith('aura-2-')) return 'aura-2';
+  if (value === 'flux' || value.startsWith('flux-')) return 'flux';
+  if (value === 'aura' || value.startsWith('aura-')) return 'aura';
+  return '';
 }
 
 /** ¿El id es de un modelo de voz de ese proveedor? ElevenLabs acepta cualquier id de su API. */
 export function ttsModelFits(provider, id) {
   if (provider === 'openai') return /^(gpt-4o-mini-tts|tts-1|tts-1-hd)$/i.test(id);
   if (provider === 'groq') return /^canopylabs\/orpheus-/i.test(id);
-  return !/^(gpt-4o-mini-tts|tts-1|tts-1-hd)$/i.test(id) && !/^canopylabs\//i.test(id);
+  if (provider === 'deepgram') return /^(aura-2|aura|flux)$/i.test(id);
+  return !/^(gpt-4o-mini-tts|tts-1|tts-1-hd)$/i.test(id) && !/^canopylabs\//i.test(id) && !/^(aura-2|aura|flux)$/i.test(id);
+}
+
+/** Voz de catálogo de la familia Deepgram. Si no encaja, la voz documentada de esa familia. */
+export function deepgramVoiceFor(model, voice) {
+  const family = deepgramTtsFamily(model) || 'aura-2';
+  const id = typeof voice === 'string' ? voice.trim().toLowerCase() : '';
+  return deepgramTtsFamily(id) === family ? id : DEEPGRAM_TTS_VOICE_DEFAULTS[family];
 }
 
 /** Voz de catálogo válida para el modelo de Groq (inglés y árabe no comparten voces). */
@@ -286,6 +318,10 @@ export function normalizeSettings(raw = {}) {
     ttsModel: ttsModel && ttsModelFits(ttsProvider, ttsModel) ? ttsModel : PROVIDER_MODEL_DEFAULTS.tts[ttsProvider],
     openaiTtsVoice: cleanEnum(input.openaiTtsVoice, OPENAI_TTS_VOICES, DEFAULTS.openaiTtsVoice),
     groqTtsVoice: groqVoiceFor(ttsProvider === 'groq' ? (ttsModel && ttsModelFits('groq', ttsModel) ? ttsModel : groqTtsModel) : groqTtsModel, input.groqTtsVoice || DEFAULTS.groqTtsVoice),
+    deepgramTtsVoice: deepgramVoiceFor(
+      ttsProvider === 'deepgram' ? (ttsModel && ttsModelFits('deepgram', ttsModel) ? ttsModel : PROVIDER_MODEL_DEFAULTS.tts.deepgram) : PROVIDER_MODEL_DEFAULTS.tts.deepgram,
+      input.deepgramTtsVoice || DEFAULTS.deepgramTtsVoice,
+    ),
     dubbingPath,
     realtimeModel: REALTIME_MODELS.includes(realtimeModel) ? realtimeModel : PROVIDER_MODEL_DEFAULTS.realtime,
     ttsStability: cleanFloat(input.ttsStability, DEFAULTS.ttsStability, 0, 1),
