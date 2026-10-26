@@ -36,7 +36,7 @@ test('defaults y normalización de rangos/valores', async () => {
   const store = createSettingsStore({ dir: 'X', fs, crypto: fakeCrypto() });
   const loaded = await store.load();
   assert.deepEqual(loaded, { ...DEFAULTS });
-  assert.equal(loaded.delayMs, 3000);
+  assert.equal(loaded.delayMs, 6000);
   assert.equal(loaded.targetLanguage, 'en');
   assert.equal(loaded.sourceLanguage, 'es');
   assert.equal(loaded.tone, 'professional');
@@ -81,7 +81,7 @@ test('JSON corrupto → defaults y copia .corrupt', async () => {
   fs.files.set(path.join('X', 'settings.json'), Buffer.from('{corrupt'));
   const store = createSettingsStore({ dir: 'X', fs, crypto: fakeCrypto() });
   const loaded = await store.load();
-  assert.equal(loaded.delayMs, 3000);
+  assert.equal(loaded.delayMs, 6000);
   assert.ok(fs.files.has(path.join('X', 'settings.json.corrupt')));
 });
 
@@ -96,7 +96,7 @@ test('keys de proveedor: cifradas en disco, nunca en claro, estado booleano para
   const settingsJson = fs.files.get(path.join('X', 'settings.json'));
   assert.equal(settingsJson === undefined || !settingsJson.includes('gsk_secret'), true);
 
-  assert.deepEqual(await store.providerKeyStatus(), { groq: true, elevenlabs: true, openai: false });
+  assert.deepEqual(await store.providerKeyStatus(), { groq: true, elevenlabs: true, openai: false, deepgram: false });
   const store2 = createSettingsStore({ dir: 'X', fs, crypto: fakeCrypto() });
   assert.deepEqual(await store2.getProviderKeys(), { groq: 'gsk_secret', elevenlabs: 'el_secret' });
 
@@ -223,11 +223,15 @@ test('protocolo v3: recorte de rangos, enums y saneado de ids de modelo', async 
   // Proveedor por etapa: el modelo debe ser del proveedor elegido; si no, el de por defecto de ese proveedor.
   assert.equal(n({}).sttProvider, 'groq');
   assert.equal(n({}).translateProvider, 'groq');
-  assert.equal(n({ sttProvider: 'deepgram' }).sttProvider, 'groq');
+  assert.equal(n({ sttProvider: 'deepgram' }).sttProvider, 'deepgram');
+  assert.equal(n({ sttProvider: 'deepgram' }).sttModel, 'nova-3');
   assert.equal(n({ translateProvider: 'elevenlabs' }).translateProvider, 'groq', 'ElevenLabs no traduce');
   assert.equal(n({ sttProvider: 'elevenlabs' }).sttModel, 'scribe_v2');
   assert.equal(n({ sttProvider: 'elevenlabs', sttModel: 'scribe_v1' }).sttModel, 'scribe_v1');
-  assert.equal(n({ sttProvider: 'elevenlabs', sttModel: 'scribe_v2_realtime' }).sttModel, 'scribe_v2', 'realtime es por WebSocket');
+  assert.equal(n({ sttProvider: 'elevenlabs', sttModel: 'scribe_v2_realtime' }).sttModel, 'scribe_v2_realtime');
+  assert.equal(n({ ttsProvider: 'openai', ttsModel: 'eleven_v3' }).ttsModel, 'gpt-4o-mini-tts');
+  assert.equal(n({ ttsProvider: 'groq', ttsModel: 'canopylabs/orpheus-arabic-saudi', groqTtsVoice: 'troy' }).groqTtsVoice, 'abdullah');
+  assert.equal(n({ dubbingPath: 'eleven_realtime', realtimeModel: 'eleven_realtime_v1_mini' }).realtimeModel, 'eleven_realtime_v1_mini');
   assert.equal(n({ sttProvider: 'openai', sttModel: 'whisper-large-v3' }).sttModel, 'gpt-4o-transcribe');
   assert.equal(n({ sttProvider: 'openai', sttModel: 'whisper-1' }).sttModel, 'whisper-1');
   assert.equal(n({ sttProvider: 'groq', sttModel: 'whisper-1' }).sttModel, 'whisper-large-v3');

@@ -28,6 +28,9 @@ export const STATES = Object.freeze(['idle', 'starting', 'running', 'stopping'])
 const INITIAL_TURN_LATENCY_MS = 3200;
 const TURN_SAFETY_MARGIN_MS = 400;
 const MIN_TURN_BUDGET_MS = 1500;
+const MIN_FIXED_WINDOW_MS = 500;
+const MIN_PROCESS_RESERVE_MS = 1200;
+const MAX_FIXED_WINDOW_MS = 4000;
 const MAX_TURN_MS = 15000;
 
 /**
@@ -123,7 +126,9 @@ export class SessionController extends EventEmitter {
 
       // Salida: micrófono virtual (driver WaveRT) — se abre primero para
       // fallar rápido si el driver no está instalado.
-      if (!settings.voiceId && !overrides.allowMissingVoice) {
+      const stockVoice = (settings.dubbingPath || 'staged') !== 'eleven_realtime' && settings.ttsProvider && settings.ttsProvider !== 'elevenlabs';
+      const hasVoice = Boolean(settings.voiceId || settings.voiceName);
+      if (!stockVoice && !hasVoice && !overrides.allowMissingVoice) {
         throw Object.assign(new Error('Todavía no hay una voz seleccionada. Elígela o clónala en la pestaña Voz.'), { code: 'voice_missing' });
       }
       // Resuelve el endpoint real (driver propio → VB-Cable) antes de abrirlo.
@@ -204,12 +209,15 @@ export class SessionController extends EventEmitter {
 
       session.pipeline = await this.deps.createPipeline({ settings, keys });
       checkActive();
+      session.directDub = typeof session.pipeline?.pushPcm === 'function';
+      if (session.directDub) this.#wireRealtime(session);
 
       session.syncBuffer = this.deps.createSyncBuffer({
         delayMs: settings.delayMs,
         fallbackMode: settings.fallbackMode,
         lateDubPolicy: settings.lateDubPolicy,
         maxDriftMs: settings.maxDriftMs,
+        maxDeferralMs: settings.maxDriftMs ?? 1500,
         outputSampleRate: 48000,
         now: this.now,
       });
@@ -245,7 +253,8 @@ export class SessionController extends EventEmitter {
         };
         session.source.on('data', session.onSourceData);
       }
-      session.mic = this.deps.createMicCapture({ deviceId, source: session.source ?? undefined });
+      session.mic = this.deps.createMicCapture({ deviceId, source: session.source ?? undefined,
+        segmenter: { fixedWindowMs: settings.segmentationMode === 'pause' ? 0 : this.turnBudgetMs(session) } });
       session.mic.on('turn-start', (turn) => {
         if (session.closing || this.session !== session) return;
         session.syncBuffer.reserveTurn({ turnId: `${session.id}:${turn.startedAt}`, sourceTimestamp: turn.startedAt });
@@ -257,11 +266,15 @@ export class SessionController extends EventEmitter {
         this.emit('level', this.lastLevel);
       });
       session.mic.on('turn', (turn) => this.#onTurn(turn));
+      session.mic.on('pcm', (pcm) => {
+        if (!session.directDub || session.closing) return;
+        try { session.pipeline.pushPcm(pcm, 16000); } catch (error) { this.#error('realtime', error); }
+      });
       session.mic.on('error', (error) => failOutput('virtual-mic', error));
       this.#applyTurnBudget(session);
       session.mic.start();
 
-      session.syncBuffer.start(this.tickIntervalMs);
+      if (!session.directDub) session.syncBuffer.start(this.tickIntervalMs);
       if (session.outputFailure) throw session.outputFailure;
       session.statsTimer = setInterval(() => this.emit('stats', this.stats()), this.statsIntervalMs);
       session.statsTimer.unref?.();
@@ -317,9 +330,34 @@ export class SessionController extends EventEmitter {
     session.monitorWriter?.dispose();
   }
 
+  #wireRealtime(session) {
+    session.pipeline.on?.('audio', ({ pcm }) => {
+      if (this.session !== session || session.closing || !pcm?.length) return;
+      session.writer.enqueue(pcm);
+      session.monitorWriter?.enqueue(pcm);
+    });
+    session.pipeline.on?.('transcript', (data) => this.emit('transcript', data));
+    session.pipeline.on?.('translation', (data) => this.emit('translation', data));
+    session.pipeline.on?.('segment', (data) => {
+      if (this.session !== session || session.closing) return;
+      this.emit('dub', {
+        turnId: data.turnId,
+        durationMs: data.durationMs ?? 0,
+        late: false,
+        scheduled: true,
+        metrics: data.metrics ?? null,
+      });
+      if (data.cost) {
+        const snapshot = session.meter.add(data.cost);
+        this.emit('cost', { turnId: data.turnId, cost: data.cost, totalVox: snapshot?.totalVox ?? session.meter.totalVox });
+      }
+    });
+    session.pipeline.on?.('error', (error) => this.#error('realtime', error));
+  }
+
   #onTurn(turn) {
     const session = this.session;
-    if (!session || this.state !== 'running') return;
+    if (!session || this.state !== 'running' || session.directDub) return;
     const turnId = ++this.turnCounter;
     const deliveryId = `${session.id}:${turn.startedAt}`;
     if (!session.syncBuffer.reserveTurn({ turnId: deliveryId, sourceTimestamp: turn.startedAt, sourceEndedAt: turn.endedAt })) return;
@@ -366,7 +404,7 @@ export class SessionController extends EventEmitter {
         if (result.translation) this.emit('translation', { turnId, text: result.translation });
         // Latencia real fin-de-voz → doblaje listo: recalibra la longitud máxima de las frases.
         if (Number.isFinite(result.readyAt) && Number.isFinite(turn.endedAt)) {
-          this.#observeLatency(session, result.readyAt - turn.endedAt);
+          this.#observeLatency(session, result.readyAt - (turn.capturedUntil ?? turn.endedAt));
         }
         const placement = session.syncBuffer.pushDub({ ...result, turnId: deliveryId });
         const durationMs = result.audioDub && result.sampleRate
@@ -376,12 +414,14 @@ export class SessionController extends EventEmitter {
           turnId,
           durationMs: Math.round(durationMs),
           late: Boolean(placement?.late),
+          metrics: result.metrics ?? null,
           scheduled: Boolean(placement?.scheduled),
           placedStart: placement?.placedStart ?? null,
           driftMs: placement?.driftMs ?? 0,
           sourceTimestamp: turn.startedAt,
           sourceEndedAt: turn.endedAt,
           placedEnd: placement?.placedEnd ?? null,
+          deferredByMs: placement?.deferredByMs ?? 0,
           reason: placement?.reason,
         });
         if (result.cost) {
@@ -409,20 +449,30 @@ export class SessionController extends EventEmitter {
   turnBudgetMs(session = this.session) {
     const delayMs = this.settings?.delayMs ?? 3000;
     const latency = this.latencyPercentile(0.95, session) ?? INITIAL_TURN_LATENCY_MS;
+    if (this.settings?.segmentationMode !== 'pause') {
+      return Math.floor(Math.min(MAX_FIXED_WINDOW_MS, Math.max(MIN_FIXED_WINDOW_MS,
+        delayMs - Math.max(MIN_PROCESS_RESERVE_MS, latency + TURN_SAFETY_MARGIN_MS))) / 20) * 20;
+    }
     return Math.round(Math.min(MAX_TURN_MS, Math.max(MIN_TURN_BUDGET_MS, delayMs - latency - TURN_SAFETY_MARGIN_MS)));
   }
 
   #applyTurnBudget(session) {
-    const required = (this.latencyPercentile(0.95, session) ?? INITIAL_TURN_LATENCY_MS) + MIN_TURN_BUDGET_MS + TURN_SAFETY_MARGIN_MS;
+    const minimum = this.settings?.segmentationMode === 'pause' ? MIN_TURN_BUDGET_MS : MIN_FIXED_WINDOW_MS;
+    const required = Math.max(MIN_PROCESS_RESERVE_MS,
+      (this.latencyPercentile(0.95, session) ?? INITIAL_TURN_LATENCY_MS) + TURN_SAFETY_MARGIN_MS) + minimum;
     const insufficient = required > (this.settings?.delayMs ?? session.syncBuffer?.delayMs ?? 3000);
     if (insufficient && !session.budgetWarned) this.emit('warn', { kind: 'latency-budget', requiredDelayMs: Math.ceil(required), message: `El retraso actual es corto para esta voz. Prueba ${Math.min(6000, Math.ceil(required / 100) * 100) / 1000} s; si las frases siguen llegando tarde, espera a que termine cada doblaje.` });
     session.budgetWarned = insufficient;
     if (typeof session?.mic?.setSegmenterLimits !== 'function') return;
     const maxTurnMs = this.turnBudgetMs(session);
-    if (maxTurnMs === session.appliedMaxTurnMs) return;
+    const mode = this.settings?.segmentationMode === 'pause' ? 'pause' : 'fixed';
+    if (maxTurnMs === session.appliedMaxTurnMs && mode === session.appliedSegmentationMode) return;
     try {
-      session.mic.setSegmenterLimits({ maxTurnMs, maxTurnGraceMs: 500, softCutWindowMs: Math.min(3000, maxTurnMs) });
+      session.mic.setSegmenterLimits({ maxTurnMs,
+        fixedWindowMs: this.settings?.segmentationMode === 'pause' ? 0 : maxTurnMs,
+        maxTurnGraceMs: 500, softCutWindowMs: Math.min(3000, maxTurnMs) });
       session.appliedMaxTurnMs = maxTurnMs;
+      session.appliedSegmentationMode = mode;
     } catch (error) {
       this.#error('mic', error);
     }
@@ -481,7 +531,10 @@ export class SessionController extends EventEmitter {
     if (!session?.syncBuffer) return false;
     if (patch.fallbackMode) session.syncBuffer.fallbackMode = patch.fallbackMode;
     if (patch.lateDubPolicy) session.syncBuffer.lateDubPolicy = patch.lateDubPolicy;
-    if (Number.isFinite(patch.maxDriftMs)) session.syncBuffer.maxDriftMs = patch.maxDriftMs;
+    if (Number.isFinite(patch.maxDriftMs)) {
+      session.syncBuffer.maxDriftMs = patch.maxDriftMs;
+      session.syncBuffer.maxDeferralMs = patch.maxDriftMs;
+    }
     if (patch.delayMs !== undefined) this.setDelay(patch.delayMs);
     const pipeline = session.pipeline;
     if (typeof pipeline?.applySettings === 'function') {
@@ -495,7 +548,7 @@ export class SessionController extends EventEmitter {
     }
     if (this.settings) {
       for (const [key, value] of Object.entries(patch)) {
-        if (value !== undefined && key !== 'ttsCapabilities' && key !== 'delayMs') this.settings[key] = value;
+        if (value !== undefined && key !== 'ttsCapabilities' && key !== 'delayMs' && key !== 'segmentationMode') this.settings[key] = value;
       }
     }
     return true;
@@ -515,10 +568,13 @@ export class SessionController extends EventEmitter {
       remainingVox: Number.isFinite(remaining) ? remaining : null,
       limitReached: Boolean(meter?.limitReached),
       turnBudgetMs: session ? this.turnBudgetMs(session) : null,
+      segmentationMode: this.settings?.segmentationMode ?? 'fixed',
       latencyMs: session?.latencyEmaMs != null ? Math.round(session.latencyEmaMs) : null,
       latencyP50Ms: this.latencyPercentile(0.5),
       latencyP95Ms: this.latencyPercentile(0.95),
-      recommendedDelayMs: Math.ceil((this.latencyPercentile(0.95) ?? INITIAL_TURN_LATENCY_MS) + MIN_TURN_BUDGET_MS + TURN_SAFETY_MARGIN_MS),
+      recommendedDelayMs: Math.max(2000, Math.ceil(Math.max(MIN_PROCESS_RESERVE_MS,
+        (this.latencyPercentile(0.95) ?? INITIAL_TURN_LATENCY_MS) + TURN_SAFETY_MARGIN_MS) +
+        (this.settings?.segmentationMode === 'pause' ? MIN_TURN_BUDGET_MS : MIN_FIXED_WINDOW_MS))),
       pipeline: session?.pipeline?.metrics ?? null,
       turns: session?.turns ?? 0,
       pendingTurns: session?.pendingTurns ?? 0,

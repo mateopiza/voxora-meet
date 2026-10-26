@@ -19,23 +19,34 @@ export const APP_DIR_NAME = 'VOXORA Meet';
 export const SETTINGS_FILE = 'settings.json';
 export const PROVIDER_KEYS_FILE = 'provider-keys.dpapi';
 
-// groq: STT (Whisper) + traducción (chat). elevenlabs: TTS con voz clonada y STT (Scribe).
-// openai: traducción (GPT) y STT. Solo hacen falta las de los proveedores elegidos
-// en `sttProvider` / `translateProvider` (más elevenlabs, siempre, por el TTS).
-export const PROVIDER_KEY_NAMES = Object.freeze(['groq', 'elevenlabs', 'openai']);
+// groq: STT (Whisper), traducción (chat) y TTS Orpheus. elevenlabs: TTS clonado, Scribe y Realtime.
+// openai: traducción, STT y TTS. deepgram: solo STT. Hace falta la key de cada proveedor en uso.
+export const PROVIDER_KEY_NAMES = Object.freeze(['groq', 'elevenlabs', 'openai', 'deepgram']);
 
-/** Proveedores que puede usar cada etapa (el TTS es siempre ElevenLabs). */
-export const STT_PROVIDERS = Object.freeze(['groq', 'elevenlabs', 'openai']);
+/** Proveedores que puede usar cada etapa. */
+export const STT_PROVIDERS = Object.freeze(['groq', 'elevenlabs', 'openai', 'deepgram']);
 export const TRANSLATE_PROVIDERS = Object.freeze(['groq', 'openai']);
+export const TTS_PROVIDERS = Object.freeze(['elevenlabs', 'openai', 'groq']);
+/** `staged` = STT + traducción + TTS. `eleven_realtime` = un agente speech-to-speech. */
+export const DUBBING_PATHS = Object.freeze(['staged', 'eleven_realtime']);
+export const REALTIME_MODELS = Object.freeze(['eleven_realtime_v1_max', 'eleven_realtime_v1_mini']);
+export const OPENAI_TTS_VOICES = Object.freeze(['alloy', 'ash', 'ballad', 'coral', 'echo', 'fable', 'nova', 'onyx', 'sage', 'shimmer', 'verse']);
+export const GROQ_TTS_VOICES = Object.freeze({
+  'canopylabs/orpheus-v1-english': Object.freeze(['troy', 'austin', 'daniel', 'autumn', 'diana', 'hannah']),
+  'canopylabs/orpheus-arabic-saudi': Object.freeze(['abdullah', 'fahad', 'sultan', 'lulwa', 'noura', 'aisha']),
+});
 
 /** Modelo que se usa al cambiar de proveedor (o si el guardado no es de ese proveedor). */
 export const PROVIDER_MODEL_DEFAULTS = Object.freeze({
-  stt: Object.freeze({ groq: 'whisper-large-v3', elevenlabs: 'scribe_v2', openai: 'gpt-4o-transcribe' }),
+  stt: Object.freeze({ groq: 'whisper-large-v3', elevenlabs: 'scribe_v2', openai: 'gpt-4o-transcribe', deepgram: 'nova-3' }),
   translate: Object.freeze({ groq: 'openai/gpt-oss-120b', openai: 'gpt-4.1' }),
+  tts: Object.freeze({ elevenlabs: 'eleven_multilingual_v2', openai: 'gpt-4o-mini-tts', groq: 'canopylabs/orpheus-v1-english' }),
+  realtime: 'eleven_realtime_v1_max',
 });
 
 export const DEFAULTS = Object.freeze({
-  delayMs: 3000,
+  delayMs: 6000,
+  segmentationMode: 'fixed',
   targetLanguage: 'en',
   sourceLanguage: 'es',
   tone: 'professional',
@@ -76,14 +87,19 @@ export const DEFAULTS = Object.freeze({
   // Endpoint donde además se escucha el doblaje localmente ('' = apagado).
   monitorDevice: '',
   // ── Protocolo v3: modelos y parámetros por etapa ──
-  sttProvider: 'groq',            // 'groq' | 'elevenlabs' (Scribe) | 'openai'
+  sttProvider: 'groq',            // 'groq' | 'elevenlabs' | 'openai' | 'deepgram'
   sttModel: 'whisper-large-v3',
   sttTemperature: 0,
   translateProvider: 'groq',      // 'groq' | 'openai'
   translateModel: 'openai/gpt-oss-120b',
   translateTemperature: 0.2,
   translateReasoningEffort: 'low',
+  ttsProvider: 'elevenlabs',      // 'elevenlabs' | 'openai' | 'groq'
   ttsModel: 'eleven_multilingual_v2',
+  openaiTtsVoice: 'alloy',
+  groqTtsVoice: 'troy',
+  dubbingPath: 'staged',          // 'staged' | 'eleven_realtime'
+  realtimeModel: 'eleven_realtime_v1_max',
   ttsStability: 0.5,
   ttsSimilarityBoost: 0.75,
   ttsStyle: 0,
@@ -96,7 +112,9 @@ export const DEFAULTS = Object.freeze({
 export const MODEL_SETTING_KEYS = Object.freeze([
   'sttProvider', 'sttModel', 'sttTemperature',
   'translateProvider', 'translateModel', 'translateTemperature', 'translateReasoningEffort', 'memoryTurns',
-  'ttsModel', 'ttsStability', 'ttsSimilarityBoost', 'ttsStyle', 'ttsSpeed', 'ttsSpeakerBoost', 'ttsTextNormalization',
+  'ttsProvider', 'ttsModel', 'openaiTtsVoice', 'groqTtsVoice',
+  'ttsStability', 'ttsSimilarityBoost', 'ttsStyle', 'ttsSpeed', 'ttsSpeakerBoost', 'ttsTextNormalization',
+  'dubbingPath', 'realtimeModel',
 ]);
 
 // Debe coincidir con TONES de pipeline/src/translate/groq-translate.mjs.
@@ -163,9 +181,24 @@ export function cleanModelId(value, fallback, mustMatch = null) {
 
 /** ¿El id es de un modelo de transcripción de ese proveedor? */
 export function sttModelFits(provider, id) {
-  if (provider === 'elevenlabs') return /^scribe_/i.test(id) && !/realtime/i.test(id);
+  if (provider === 'elevenlabs') return /^(scribe_v1|scribe_v2|scribe_v2_realtime)$/i.test(id);
   if (provider === 'openai') return /^(whisper-1$|gpt-4o(-mini)?-transcribe)/i.test(id) && !/diarize/i.test(id);
+  if (provider === 'deepgram') return /^(nova-3|nova-3-multi)$/i.test(id);
   return /whisper/i.test(id) && id.toLowerCase() !== 'whisper-1';
+}
+
+/** ¿El id es de un modelo de voz de ese proveedor? ElevenLabs acepta cualquier id de su API. */
+export function ttsModelFits(provider, id) {
+  if (provider === 'openai') return /^(gpt-4o-mini-tts|tts-1|tts-1-hd)$/i.test(id);
+  if (provider === 'groq') return /^canopylabs\/orpheus-/i.test(id);
+  return !/^(gpt-4o-mini-tts|tts-1|tts-1-hd)$/i.test(id) && !/^canopylabs\//i.test(id);
+}
+
+/** Voz de catálogo válida para el modelo de Groq (inglés y árabe no comparten voces). */
+export function groqVoiceFor(model, voice) {
+  const list = GROQ_TTS_VOICES[model] ?? GROQ_TTS_VOICES['canopylabs/orpheus-v1-english'];
+  const id = typeof voice === 'string' ? voice.trim().toLowerCase() : '';
+  return list.includes(id) ? id : list[0];
 }
 
 /** ¿El id es de un modelo de chat de ese proveedor? (los de OpenAI no llevan prefijo `org/`). */
@@ -204,6 +237,11 @@ export function normalizeSettings(raw = {}) {
   const sttModel = cleanModelId(input.sttModel, '');
   const translateProvider = cleanEnum(input.translateProvider, TRANSLATE_PROVIDERS, DEFAULTS.translateProvider);
   const translateModel = cleanModelId(input.translateModel, '');
+  const ttsProvider = cleanEnum(input.ttsProvider, TTS_PROVIDERS, DEFAULTS.ttsProvider);
+  const ttsModel = cleanModelId(input.ttsModel, '');
+  const dubbingPath = cleanEnum(input.dubbingPath, DUBBING_PATHS, DEFAULTS.dubbingPath);
+  const realtimeModel = cleanModelId(input.realtimeModel, '');
+  const groqTtsModel = ttsModel && ttsModelFits('groq', ttsModel) ? ttsModel : PROVIDER_MODEL_DEFAULTS.tts.groq;
   return {
     delayMs: cleanInt(input.delayMs, DEFAULTS.delayMs, 2000, 6000),
     targetLanguage: cleanString(input.targetLanguage, DEFAULTS.targetLanguage, 16) || DEFAULTS.targetLanguage,
@@ -230,6 +268,7 @@ export function normalizeSettings(raw = {}) {
     voiceId: cleanString(input.voiceId, DEFAULTS.voiceId, 128),
     voiceName: cleanString(input.voiceName, DEFAULTS.voiceName, 80),
     lateDubPolicy: LATE_POLICIES.has(input.lateDubPolicy) ? input.lateDubPolicy : DEFAULTS.lateDubPolicy,
+    segmentationMode: input.segmentationMode === 'pause' ? 'pause' : 'fixed',
     maxDriftMs: cleanInt(input.maxDriftMs, DEFAULTS.maxDriftMs, 0, 60000),
     maxVoxPerSession: cleanInt(input.maxVoxPerSession, DEFAULTS.maxVoxPerSession, 0, 1e9),
     warnAtVox: cleanInt(input.warnAtVox, DEFAULTS.warnAtVox, 0, 1e9),
@@ -243,7 +282,12 @@ export function normalizeSettings(raw = {}) {
     translateModel: translateModel && translateModelFits(translateProvider, translateModel) ? translateModel : PROVIDER_MODEL_DEFAULTS.translate[translateProvider],
     translateTemperature: cleanFloat(input.translateTemperature, DEFAULTS.translateTemperature, 0, 1),
     translateReasoningEffort: cleanEnum(input.translateReasoningEffort, REASONING_EFFORTS, DEFAULTS.translateReasoningEffort),
-    ttsModel: cleanModelId(input.ttsModel, DEFAULTS.ttsModel),
+    ttsProvider,
+    ttsModel: ttsModel && ttsModelFits(ttsProvider, ttsModel) ? ttsModel : PROVIDER_MODEL_DEFAULTS.tts[ttsProvider],
+    openaiTtsVoice: cleanEnum(input.openaiTtsVoice, OPENAI_TTS_VOICES, DEFAULTS.openaiTtsVoice),
+    groqTtsVoice: groqVoiceFor(ttsProvider === 'groq' ? (ttsModel && ttsModelFits('groq', ttsModel) ? ttsModel : groqTtsModel) : groqTtsModel, input.groqTtsVoice || DEFAULTS.groqTtsVoice),
+    dubbingPath,
+    realtimeModel: REALTIME_MODELS.includes(realtimeModel) ? realtimeModel : PROVIDER_MODEL_DEFAULTS.realtime,
     ttsStability: cleanFloat(input.ttsStability, DEFAULTS.ttsStability, 0, 1),
     ttsSimilarityBoost: cleanFloat(input.ttsSimilarityBoost, DEFAULTS.ttsSimilarityBoost, 0, 1),
     ttsStyle: cleanFloat(input.ttsStyle, DEFAULTS.ttsStyle, 0, 1),

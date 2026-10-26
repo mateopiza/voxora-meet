@@ -60,6 +60,9 @@ export function ttsModelCapabilities(modelId) {
     caps.supportsSpeed = false;
     caps.supportsSpeakerBoost = id === "eleven_v3_conversational";
     caps.stabilityPresets = [...V3_STABILITY_PRESETS];
+  } else if (/^eleven_v4/.test(id)) {
+    caps.supportsLanguageCode = true;
+    caps.supportsSpeed = true;
   }
   return caps;
 }
@@ -171,13 +174,14 @@ export const IVC_REQUIREMENTS = Object.freeze({
 });
 
 export class TtsError extends Error {
-  constructor(message, { cause, status, outputFormat, model, stage = "tts" } = {}) {
+  constructor(message, { cause, status, outputFormat, model, stage = "tts", provider } = {}) {
     super(message, { cause });
     this.name = "TtsError";
     this.status = status;
     this.outputFormat = outputFormat;
     this.stage = stage;
     if (model) this.model = model;
+    if (provider) this.provider = provider;
   }
 }
 
@@ -241,6 +245,7 @@ export class ElevenLabsTts {
     if (!apiKey) throw new TypeError("ElevenLabsTts: falta `apiKey` (ELEVENLABS_API_KEY)");
     this.#apiKey = apiKey;
     this.#fetch = fetchImpl;
+    this.provider = "elevenlabs";
     this.modelId = String(modelId || DEFAULT_TTS_MODEL);
     this.capabilities = resolveTtsCapabilities(this.modelId, capabilities);
     this.voiceSettings = normalizeVoiceSettings(voiceSettings);

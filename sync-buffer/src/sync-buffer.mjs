@@ -67,6 +67,7 @@ export class SyncBuffer extends EventEmitter {
     this.maxDriftMs = Number.isFinite(options.maxDriftMs) ? options.maxDriftMs : 1500;
     this.maxQueuedFrames = Number.isFinite(options.maxQueuedFrames) ? options.maxQueuedFrames : 600;
     this.maxDubQueueMs = options.maxDubQueueMs ?? 15000;
+    this.maxDeferralMs = options.maxDeferralMs ?? Infinity;
     this.maxPendingMs = options.maxPendingMs ?? 30000;
     this.maxTickMs = options.maxTickMs ?? 500;
     this.fadeMs = options.fadeMs ?? 3;
@@ -233,6 +234,7 @@ export class SyncBuffer extends EventEmitter {
     if (turn && turn.state !== 'pending') return reject('already-decided');
     if (this.#releasedUntil !== null && sourceTimestamp < this.#releasedUntil - HISTORY_MS) return reject('expired');
     if (this.#fallbackRanges.some((r) => r.end > sourceTimestamp && r.start < Math.max(sourceEnd, sourceTimestamp + 1000 / sampleRate))) return reject('original-already-delivered');
+    if (this.#releasedUntil !== null && this.#dubs.some((d) => d.sourceStart > sourceTimestamp && d.placedStart < this.#releasedUntil)) return reject('out-of-order');
     if (this.#turns.size >= 1024 && !turn) return reject('turn-capacity');
     const durationEstimate = (audioDub?.byteLength ?? 0) / 2 / sampleRate * 1000;
     const queuedEnd = this.#dubs.at(-1)?.placedEnd ?? sourceTimestamp;
@@ -248,10 +250,32 @@ export class SyncBuffer extends EventEmitter {
       if (this.lateDubPolicy === 'drop') return reject('late');
     }
 
-    const lastEnd = this.#dubs.length ? this.#dubs[this.#dubs.length - 1].placedEnd : -Infinity;
+    // Results may finish out of order with concurrent TTS. Place by source time,
+    // then move only clips that have not started; already audible PCM is immutable.
+    const lastEnd = this.#dubs.filter((d) => d.sourceStart <= sourceTimestamp ||
+      (this.#releasedUntil !== null && d.placedStart < this.#releasedUntil))
+      .reduce((end, d) => Math.max(end, d.placedEnd), -Infinity);
     let placedStart = Math.max(sourceTimestamp, lastEnd);
     if (this.#releasedUntil !== null) placedStart = Math.max(placedStart, this.#releasedUntil);
+    if (placedStart - sourceTimestamp > this.maxDeferralMs) return reject('deferral-limit');
     const placedEnd = placedStart + durationMs;
+    let projectedEnd = placedEnd;
+    const moves = [];
+    for (const pending of this.#dubs.filter((d) => d.sourceStart > sourceTimestamp &&
+      (this.#releasedUntil === null || d.placedStart >= this.#releasedUntil)).sort((a, b) => a.sourceStart - b.sourceStart)) {
+      const start = Math.max(pending.sourceStart, projectedEnd);
+      if (start - pending.sourceStart > this.maxDeferralMs) return reject('deferral-limit');
+      const end = start + pending.placedEnd - pending.placedStart;
+      moves.push({ pending, start, end });
+      projectedEnd = end;
+    }
+    for (const { pending, start, end } of moves) {
+      pending.placedStart = start;
+      pending.placedEnd = end;
+      pending.coverEnd = Math.max(pending.sourceEnd, end);
+      const reservation = this.#turns.get(String(pending.dub.turnId ?? `source:${pending.sourceStart}:${pending.sourceEnd}`));
+      if (reservation) reservation.expires = end;
+    }
     this.#turns.set(key, { start: sourceTimestamp, end: sourceEnd, expires: placedEnd, state: 'scheduled' });
     const entry = {
       sourceStart: sourceTimestamp,
@@ -265,11 +289,9 @@ export class SyncBuffer extends EventEmitter {
       dub,
     };
     this.#dubs.push(entry);
-    if (this.#dubs.length > 1 && this.#dubs[this.#dubs.length - 2].placedStart > placedStart) {
-      this.#dubs.sort((a, b) => a.placedStart - b.placedStart);
-    }
+    this.#dubs.sort((a, b) => a.placedStart - b.placedStart);
     this.#updateDrift(Math.max(0, placedEnd - sourceEnd));
-    return { scheduled: true, late, placedStart, placedEnd, driftMs: this.#driftMs };
+    return { scheduled: true, late, placedStart, placedEnd, deferredByMs: placedStart - sourceTimestamp, driftMs: this.#driftMs };
   }
 
   // ── scheduler ───────────────────────────────────────────────────────────

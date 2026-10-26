@@ -165,7 +165,13 @@ export async function createEngine({ input = process.stdin, output = process.std
     throw new ProtocolError('missing_key', `Falta la API key de ${PROVIDER_LABELS[provider] ?? provider} (${stage}). Añádela en Ajustes o elige otro proveedor.`);
   }
 
-  /** Cliente de STT del proveedor elegido (`sttProvider`): Groq Whisper, ElevenLabs Scribe u OpenAI. */
+  function sttKind(settings) {
+    if (settings.sttProvider === 'deepgram') return 'deepgram';
+    if (settings.sttProvider === 'elevenlabs') return settings.sttModel === 'scribe_v2_realtime' ? 'scribe-realtime' : 'scribe';
+    return settings.sttProvider || 'groq';
+  }
+
+  /** Cliente de STT del proveedor elegido. */
   function buildStt(index, settings, keys, vocabulary) {
     const provider = settings.sttProvider;
     const options = {
@@ -176,7 +182,33 @@ export async function createEngine({ input = process.stdin, output = process.std
       vocabulary,
       userId: USER_ID,
     };
-    return provider === 'elevenlabs' ? new index.ElevenLabsScribeStt(options) : new index.GroqWhisperStt({ ...options, provider });
+    if (provider === 'deepgram') return new index.DeepgramStt(options);
+    if (sttKind(settings) === 'scribe-realtime') return new index.ElevenLabsScribeRealtimeStt(options);
+    if (provider === 'elevenlabs') return new index.ElevenLabsScribeStt(options);
+    return new index.GroqWhisperStt({ ...options, provider });
+  }
+
+  /** Cliente de voz: ElevenLabs clonado, OpenAI o Groq Orpheus. */
+  function buildTts(index, settings, keys) {
+    const provider = settings.ttsProvider || 'elevenlabs';
+    if (provider === 'openai' || provider === 'groq') {
+      return new index.SpeechTts({
+        provider,
+        apiKey: providerKey(keys, provider, 'voz'),
+        model: settings.ttsModel,
+        voice: provider === 'groq' ? settings.groqTtsVoice : settings.openaiTtsVoice,
+        instructions: settings.styleInstruction || '',
+        fetch: fetchImpl,
+      });
+    }
+    const { ttsCapabilities } = models.capabilitiesFor(settings);
+    return new index.ElevenLabsTts({
+      apiKey: providerKey(keys, 'elevenlabs', 'voz'),
+      modelId: settings.ttsModel,
+      voiceSettings: index.voiceSettingsFromFlat(settings),
+      capabilities: ttsCapabilities,
+      textNormalization: settings.ttsTextNormalization,
+    });
   }
 
   /** Traductor del proveedor elegido (`translateProvider`): Groq u OpenAI. */
@@ -208,9 +240,10 @@ export async function createEngine({ input = process.stdin, output = process.std
     const pipeline = controller.session?.pipeline;
     if (typeof pipeline?.replaceStages !== 'function' || typeof pipeline.currentSettings !== 'function') return;
     const current = pipeline.currentSettings();
-    const sttChanged = Boolean(current.sttProvider) && current.sttProvider !== settings.sttProvider;
+    const sttChanged = Boolean(current.sttClientKind) && current.sttClientKind !== sttKind(settings);
     const translateChanged = Boolean(current.translateProvider) && current.translateProvider !== settings.translateProvider;
-    if (!sttChanged && !translateChanged) return;
+    const ttsChanged = (current.ttsProvider || 'elevenlabs') !== (settings.ttsProvider || 'elevenlabs');
+    if (!sttChanged && !translateChanged && !ttsChanged) return;
     const { index, vocabulary, glossary } = await pipelineStores();
     const keys = await store.getProviderKeys();
     const swap = (stage, modelKey, build) => {
@@ -223,6 +256,7 @@ export async function createEngine({ input = process.stdin, output = process.std
     };
     if (sttChanged) swap('stt', 'sttModel', () => buildStt(index, settings, keys, vocabulary));
     if (translateChanged) swap('translator', 'translateModel', () => buildTranslator(index, settings, keys, glossary));
+    if (ttsChanged) swap('tts', 'ttsModel', () => buildTts(index, settings, keys));
   }
 
   const controller = new SessionController({
@@ -264,17 +298,26 @@ export async function createEngine({ input = process.stdin, output = process.std
       // Los overrides de session.start llegan sin normalizar: mismos rangos que settings.set.
       const settings = normalizeSettings(rawSettings);
       const userId = USER_ID;
+      if (settings.dubbingPath === 'eleven_realtime') {
+        if (!keys.elevenlabs) throw new ProtocolError('missing_key', 'Falta la API key de ElevenLabs (Realtime). Añádela en Ajustes.');
+        const entries = await glossary.get(userId);
+        const dub = new module.ElevenRealtimeDub({
+          apiKey: keys.elevenlabs,
+          model: settings.realtimeModel,
+          voice: settings.voiceName || settings.voiceId,
+          sourceLanguage: settings.sourceLanguage,
+          targetLanguage: settings.targetLanguage,
+          glossary: entries,
+          styleInstruction: settings.styleInstruction || '',
+          fetch: fetchImpl,
+        });
+        await dub.open();
+        return dub;
+      }
       const stt = buildStt(module, settings, keys, vocabulary);
       const translator = buildTranslator(module, settings, keys, glossary);
-      if (!keys.elevenlabs) throw new ProtocolError('missing_key', 'Falta la API key de ElevenLabs (voz). Añádela en Ajustes.');
-      const { ttsCapabilities, ttsCostMultiplier } = models.capabilitiesFor(settings);
-      const tts = new module.ElevenLabsTts({
-        apiKey: keys.elevenlabs,
-        modelId: settings.ttsModel,
-        voiceSettings: module.voiceSettingsFromFlat(settings),
-        capabilities: ttsCapabilities,
-        textNormalization: settings.ttsTextNormalization,
-      });
+      const { ttsCostMultiplier } = models.capabilitiesFor(settings);
+      const tts = buildTts(module, settings, keys);
       // El medidor VOX lo lleva el SessionController (evita cobrar dos veces).
       return new module.DubbingPipeline({
         stt,
@@ -286,6 +329,7 @@ export async function createEngine({ input = process.stdin, output = process.std
         sourceLanguage: settings.sourceLanguage,
         targetLanguage: settings.targetLanguage,
         ttsCostMultiplier,
+        ttsConcurrency: settings.segmentationMode === 'fixed' ? 2 : 1,
       });
     },
     createSyncBuffer: (opts) => new SyncBuffer(opts),
@@ -331,6 +375,7 @@ export async function createEngine({ input = process.stdin, output = process.std
     // shell por el pipe local): se cifran con DPAPI y nunca se devuelven.
     'settings.set': async (params) => {
       const patch = params?.settings ?? params ?? {};
+      const runningPath = controller.state === 'running' ? (controller.settings?.dubbingPath || 'staged') : null;
       const settings = await store.save(patch);
       if (params?.providerKeys && typeof params.providerKeys === 'object') {
         const clean = {};
@@ -338,6 +383,11 @@ export async function createEngine({ input = process.stdin, output = process.std
         await store.setProviderKeys(clean);
       }
       // Modelos/parámetros en caliente: rigen desde el siguiente turno de la sesión en curso.
+      if (runningPath && runningPath !== settings.dubbingPath) {
+        await controller.stop();
+        await controller.start();
+        return { settings, providerKeys: await store.providerKeyStatus(), restarted: true };
+      }
       const live = { ...settings, ...models.capabilitiesFor(settings) };
       await swapLiveProviders(settings, live);
       controller.applyLiveSettings(live);
@@ -366,6 +416,8 @@ export async function createEngine({ input = process.stdin, output = process.std
         translateModel: s.translateModel,
         ttsModel: s.ttsModel,
         ttsCostMultiplier: models.ttsInfo(s.ttsModel).costMultiplier,
+        dubbingPath: s.dubbingPath,
+        realtimeModel: s.realtimeModel,
         translateReasoningEffort: s.translateReasoningEffort,
         memoryTurns: s.memoryTurns,
       });
@@ -374,11 +426,12 @@ export async function createEngine({ input = process.stdin, output = process.std
     // { text?, voiceId? } → WAV (data URL) sintetizado con los ajustes TTS actuales. Gasta caracteres.
     'tts.preview': async (params) => {
       const keys = await store.getProviderKeys();
-      if (!keys.elevenlabs) throw new ProtocolError('missing_key', 'Falta la API key de ElevenLabs (Ajustes).');
       const settings = await store.load();
+      const stock = settings.ttsProvider === 'openai' || settings.ttsProvider === 'groq';
+      if (!stock && !keys.elevenlabs) throw new ProtocolError('missing_key', 'Falta la API key de ElevenLabs (Ajustes).');
       const voiceId = String(params?.voiceId || settings.voiceId || '').trim();
-      if (!voiceId) throw new ProtocolError('voice_missing', 'Todavía no hay una voz seleccionada. Elígela o clónala en la pestaña Voz.');
-      if (!/^[A-Za-z0-9]{8,64}$/.test(voiceId)) {
+      if (!stock && !voiceId) throw new ProtocolError('voice_missing', 'Todavía no hay una voz seleccionada. Elígela o clónala en la pestaña Voz.');
+      if (!stock && !/^[A-Za-z0-9]{8,64}$/.test(voiceId)) {
         throw new ProtocolError('bad_request', 'El Voice ID no tiene un formato válido (letras y números, como aparece en ElevenLabs).');
       }
       const custom = typeof params?.text === 'string' ? params.text.trim().replace(/\s+/g, ' ') : '';
@@ -388,16 +441,17 @@ export async function createEngine({ input = process.stdin, output = process.std
       const text = custom || previewTextFor(settings.targetLanguage);
       const { module: index, error } = await loadSibling('pipelineIndex');
       if (!index) throw new ProtocolError('module_missing', error);
-      const { ttsCapabilities } = models.capabilitiesFor(settings);
-      const tts = new index.ElevenLabsTts({
-        apiKey: keys.elevenlabs,
-        modelId: settings.ttsModel,
-        voiceSettings: index.voiceSettingsFromFlat(settings),
-        capabilities: ttsCapabilities,
-        textNormalization: settings.ttsTextNormalization,
-        retries: 1,
-        fetch: fetchImpl,
-      });
+      const tts = stock
+        ? buildTts(index, settings, keys)
+        : new index.ElevenLabsTts({
+          apiKey: keys.elevenlabs,
+          modelId: settings.ttsModel,
+          voiceSettings: index.voiceSettingsFromFlat(settings),
+          capabilities: models.capabilitiesFor(settings).ttsCapabilities,
+          textNormalization: settings.ttsTextNormalization,
+          retries: 1,
+          fetch: fetchImpl,
+        });
       const synth = await tts.synthesize({ text, voiceId, languageCode: settings.targetLanguage, allowMp3Fallback: true });
       const isPcm = synth.audioFormat === 'pcm_s16le';
       const bytes = isPcm ? index.pcmToWav(synth.audio, { sampleRate: synth.sampleRate, channels: 1, bitsPerSample: 16 }) : synth.audio;

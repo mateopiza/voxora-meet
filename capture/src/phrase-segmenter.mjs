@@ -19,6 +19,7 @@ import { EventEmitter } from "node:events";
 
 const DEFAULTS = Object.freeze({
   sampleRate: 16000,
+  fixedWindowMs: 0, // 0 preserves pause endpointing; >0 uses the master sample timeline.
   frameMs: 20,
   // Endpointing
   endSilenceMs: 700, // silencio continuo que cierra el turno
@@ -75,6 +76,10 @@ function toBuffer(chunk) {
 }
 
 function validateOptions(options) {
+  if (!Number.isFinite(options.fixedWindowMs) || options.fixedWindowMs < 0 ||
+      (options.fixedWindowMs > 0 && options.fixedWindowMs < options.frameMs)) {
+    throw new RangeError('PhraseSegmenter: fixedWindowMs inválido');
+  }
   const positive = [
     "sampleRate", "frameMs", "endSilenceMs", "minTurnMs", "maxTurnMs", "attackMs", "hangoverMs",
     "noiseHistoryMs", "levelIntervalMs",
@@ -112,10 +117,11 @@ export class PhraseSegmenter extends EventEmitter {
    * Solo se aceptan claves de tiempo; el turno en curso usa los nuevos límites desde el siguiente frame.
    */
   setLimits(patch = {}) {
-    const allowed = ["endSilenceMs", "minTurnMs", "maxTurnMs", "softCutWindowMs", "softCutSilenceMs", "maxTurnGraceMs"];
+    const allowed = ["fixedWindowMs", "endSilenceMs", "minTurnMs", "maxTurnMs", "softCutWindowMs", "softCutSilenceMs", "maxTurnGraceMs"];
     const next = { ...this.options };
     for (const key of allowed) if (patch[key] !== undefined) next[key] = patch[key];
     validateOptions(next);
+    if ((next.fixedWindowMs > 0) !== (this.options.fixedWindowMs > 0)) this.flush();
     this.options = Object.freeze(next);
     return this.options;
   }
@@ -135,6 +141,8 @@ export class PhraseSegmenter extends EventEmitter {
     this.turn = null;
     this.nextLevelAt = null;
     this.lastDecision = null;
+    this.fixedWindow = null;
+    this.windowSequence = 0;
   }
 
   /** `true` mientras la compuerta considera que hay voz. */
@@ -144,7 +152,7 @@ export class PhraseSegmenter extends EventEmitter {
 
   /** `true` mientras hay un turno abierto (todavía no cerrado por silencio). */
   get active() {
-    return this.turn !== null;
+    return this.turn !== null || this.fixedWindow?.reservedAt != null;
   }
 
   /** Última decisión de la compuerta (útil para UI/diagnóstico). */
@@ -170,7 +178,10 @@ export class PhraseSegmenter extends EventEmitter {
       const gap = nowMs - expectedEndMs;
       // Solo re-anclamos hacia adelante: si el audio llega "más rápido que el tiempo real" es porque
       // venía bufferizado y el reloj de muestras sigue siendo la referencia correcta.
-      if (gap > resyncToleranceMs) this.originMs += gap;
+      if (gap > resyncToleranceMs) {
+        if (this.fixedWindow) this.#closeFixedWindow('gap');
+        this.originMs += gap;
+      }
     }
 
     const data = this.pending.length ? Buffer.concat([this.pending, buffer]) : buffer;
@@ -188,6 +199,7 @@ export class PhraseSegmenter extends EventEmitter {
    * frame completo se descartan. Se llama al parar la captura.
    */
   flush() {
+    if (this.fixedWindow) this.#closeFixedWindow('flush');
     if (this.turn) this.#closeTurn("flush");
     this.pending = Buffer.alloc(0);
   }
@@ -239,7 +251,9 @@ export class PhraseSegmenter extends EventEmitter {
 
     const frame = { pcm: Buffer.from(pcm), startMs, db: signalDb, sumSquares, voiced: voiceLike };
 
-    if (!this.turn) {
+    if (options.fixedWindowMs > 0) {
+      this.#appendFixedFrame(frame, endMs);
+    } else if (!this.turn) {
       this.#pushPreRoll(frame);
       // Abre turno al transicionar a compuerta abierta, o si la compuerta sigue abierta tras un
       // corte por longitud y vuelve a haber voz.
@@ -270,6 +284,48 @@ export class PhraseSegmenter extends EventEmitter {
         at: endMs,
       });
     }
+  }
+
+  #appendFixedFrame(frame, endMs) {
+    if (!this.fixedWindow) {
+      const durationMs = Math.ceil(this.options.fixedWindowMs / this.options.frameMs) * this.options.frameMs;
+      this.fixedWindow = { sequence: ++this.windowSequence, startedAt: frame.startMs,
+        deadlineAt: frame.startMs + durationMs, frames: [], voicedMs: 0, reservedAt: null };
+    }
+    const window = this.fixedWindow;
+    window.frames.push(frame);
+    if (frame.voiced) {
+      window.voicedMs += this.options.frameMs;
+      if (window.reservedAt === null) {
+        window.reservedAt = frame.startMs;
+        this.emit('turn-start', { startedAt: window.reservedAt, windowSequence: window.sequence });
+      }
+    }
+    if (endMs >= window.deadlineAt) this.#closeFixedWindow('window');
+  }
+
+  #closeFixedWindow(reason) {
+    const window = this.fixedWindow;
+    this.fixedWindow = null;
+    const { frames } = window;
+    const endedAt = frames.at(-1).startMs + this.options.frameMs;
+    this.emit('window', { sequence: window.sequence, startedAt: window.startedAt, endedAt,
+      voicedMs: window.voicedMs, reason });
+    if (window.reservedAt === null || window.voicedMs < this.options.minTurnMs) {
+      if (window.reservedAt !== null) this.emit('turn-discarded', { startedAt: window.reservedAt });
+      return;
+    }
+    // Keep the real onset. Leading silence must not move the translated voice to the window start.
+    const first = frames.findIndex((frame) => frame.voiced);
+    let last = frames.length - 1;
+    while (last > first && !frames[last].voiced) last--;
+    const speech = frames.slice(first, last + 1);
+    const pcm = Buffer.concat(speech.map((frame) => frame.pcm));
+    const sumSquares = speech.reduce((sum, frame) => sum + frame.sumSquares, 0);
+    this.emit('turn', { pcm, sampleRate: this.options.sampleRate,
+      startedAt: window.reservedAt, endedAt: speech.at(-1).startMs + this.options.frameMs,
+      capturedUntil: endedAt, windowStartedAt: window.startedAt, windowSequence: window.sequence,
+      voicedMs: window.voicedMs, rmsDb: rmsToDb(Math.sqrt(sumSquares / (pcm.length / 2))), reason });
   }
 
   #learnNoiseFloor(signalDb) {

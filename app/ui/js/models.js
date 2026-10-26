@@ -26,7 +26,12 @@ export const MODEL_DEFAULTS = Object.freeze({
   translateTemperature: 0.2,
   translateReasoningEffort: 'low',
   memoryTurns: 8,
+  ttsProvider: 'elevenlabs',
   ttsModel: 'eleven_multilingual_v2',
+  openaiTtsVoice: 'alloy',
+  groqTtsVoice: 'troy',
+  dubbingPath: 'staged',
+  realtimeModel: 'eleven_realtime_v1_max',
   ttsStability: 0.5,
   ttsSimilarityBoost: 0.75,
   ttsStyle: 0,
@@ -39,7 +44,8 @@ const VOICE_KEYS = ['ttsStability', 'ttsSimilarityBoost', 'ttsStyle', 'ttsSpeed'
 // Tarjeta (data-card de su .apply-chip) donde vive cada ajuste: Modelos (stt / translate / tts),
 // Traducción (stt-tune / tr-tune / glossary) y Voz (tts-char / tts-read).
 const CARD_OF = {
-  sttProvider: 'stt', translateProvider: 'translate',
+  sttProvider: 'stt', translateProvider: 'translate', ttsProvider: 'tts',
+  dubbingPath: 'path', realtimeModel: 'path', openaiTtsVoice: 'tts', groqTtsVoice: 'tts',
   sttModel: 'stt', sttTemperature: 'stt-tune', vocabulary: 'stt-tune',
   translateModel: 'translate', translateTemperature: 'tr-tune', translateReasoningEffort: 'tr-tune',
   memoryTurns: 'tr-tune', tone: 'tr-tune', styleInstruction: 'tr-tune', glossary: 'glossary',
@@ -72,9 +78,18 @@ function current(key) {
 
 // Proveedor por etapa (la voz es siempre ElevenLabs). El catálogo trae las listas de todos los
 // proveedores (`sttByProvider`, `translateByProvider`): cambiar de proveedor no espera al motor.
-const PROVIDER_OF = { stt: 'sttProvider', translate: 'translateProvider' };
-const PROVIDER_FALLBACK = { stt: ['groq', 'elevenlabs', 'openai'], translate: ['groq', 'openai'] };
-const STAGE_KIND = { stt: { groq: 'Whisper', elevenlabs: 'Scribe', openai: 'Transcripción' }, translate: {} };
+const PROVIDER_OF = { stt: 'sttProvider', translate: 'translateProvider', tts: 'ttsProvider' };
+const PROVIDER_FALLBACK = {
+  stt: ['groq', 'elevenlabs', 'openai', 'deepgram'],
+  translate: ['groq', 'openai'],
+  tts: ['elevenlabs', 'openai', 'groq'],
+};
+const STAGE_KIND = {
+  stt: { groq: 'Whisper', elevenlabs: 'Scribe', openai: 'Transcripción', deepgram: 'Nova' },
+  translate: {},
+  tts: { elevenlabs: 'Clon', openai: 'Catálogo', groq: 'Orpheus' },
+};
+const realtimeOn = () => current('dubbingPath') === 'eleven_realtime';
 const providerLabel = (id) => models.catalog?.providers?.labels?.[id] || PROVIDER_LABELS[id] || id;
 
 function listOf(kind) {
@@ -133,11 +148,52 @@ function changeProvider(kind, provider) {
 }
 
 function renderProviders() {
-  for (const [kind, select] of [['stt', els.sttProvider], ['translate', els.trProvider]]) {
+  for (const [kind, select] of [['stt', els.sttProvider], ['translate', els.trProvider], ['tts', els.ttsProvider]]) {
+    if (!select) continue;
     const provider = String(current(PROVIDER_OF[kind]));
     fillSelect(select, providerOptions(kind), provider);
     const text = [providerLabel(provider), STAGE_KIND[kind][provider] || (kind === 'translate' ? 'LLM' : '')].filter(Boolean).join(' · ');
-    for (const el of els.eyebrows[kind]) el.textContent = text;
+    for (const el of els.eyebrows[kind] || []) el.textContent = text;
+  }
+}
+
+function renderRoute() {
+  if (!els.route) return;
+  const path = current('dubbingPath');
+  const realtime = path === 'eleven_realtime';
+  const rt = (models.catalog?.realtime || []).find((m) => m.id === current('realtimeModel'));
+  if (realtime) {
+    els.route.textContent = `Ruta activa: Eleven Realtime · ${rt?.label || current('realtimeModel')}`;
+  } else {
+    const stt = findModel('stt', current('sttModel'));
+    const tr = findModel('translate', current('translateModel'));
+    const voice = findModel('tts', current('ttsModel'));
+    els.route.textContent = `Ruta activa: ${providerLabel(current('sttProvider'))} ${stt?.label || current('sttModel')} → ${providerLabel(current('translateProvider'))} ${tr?.label || current('translateModel')} → ${providerLabel(current('ttsProvider'))} ${voice?.label || current('ttsModel')}`;
+  }
+  if (els.realtimeField) els.realtimeField.hidden = !realtime;
+  if (els.realtimeModel) {
+    const list = models.catalog?.realtime || [
+      { id: 'eleven_realtime_v1_max', label: 'Realtime Max' },
+      { id: 'eleven_realtime_v1_mini', label: 'Realtime Mini' },
+    ];
+    fillSelect(els.realtimeModel, list.map((m) => ({ value: m.id, label: `${m.label}${m.recommended ? ' · recomendado' : ''}` })), String(current('realtimeModel')));
+  }
+  for (const card of [els.cardStt, els.cardTr, els.cardTts]) {
+    if (!card) continue;
+    card.querySelectorAll('select, input, button').forEach((el) => { el.disabled = realtime; });
+  }
+  const voiceModel = findModel('tts', current('ttsModel'));
+  const stock = !realtime && current('ttsProvider') !== 'elevenlabs';
+  if (els.voiceField) els.voiceField.hidden = !stock;
+  if (stock && els.ttsVoice) {
+    const voices = voiceModel?.voices || [];
+    const key = current('ttsProvider') === 'groq' ? 'groqTtsVoice' : 'openaiTtsVoice';
+    fillSelect(els.ttsVoice, voices.map((id) => ({ value: id, label: id })), String(current(key)));
+  }
+  if (els.assume) {
+    els.assume.textContent = realtime
+      ? 'Estimado: Eleven Realtime se cobra por el audio de entrada. La tarifa pública aún no es estable.'
+      : 'Supone que hablas la mitad del tiempo de la reunión.';
   }
 }
 
@@ -250,6 +306,15 @@ function renderStability(m) {
 }
 
 function renderTts(m) {
+  const stock = current('ttsProvider') !== 'elevenlabs';
+  if (els.stabilityField) els.stabilityField.hidden = stock;
+  if (els.presetsField) els.presetsField.hidden = stock || !m?.stabilityPresets;
+  if (stock) {
+    els.styleField.hidden = true;
+    els.boostField.hidden = true;
+    els.speedField.hidden = true;
+    return;
+  }
   renderStability(m);
   // Sin catálogo se muestran todos los controles (el motor ignora lo que el modelo no admite).
   const known = Boolean(m);
@@ -277,6 +342,7 @@ function renderModels() {
   renderInfo(els.ttsInfo, 'tts', findModel('tts', tts));
   renderEffort(findModel('translate', tr));
   renderTts(findModel('tts', tts));
+  renderRoute();
   ranges.forEach(syncRange);
 
   const s = state.settings || {};
@@ -683,7 +749,11 @@ export function initModels() {
     sttProvider: $('#sel-stt-provider'), sttModel: $('#sel-stt-model'), sttInfo: $('#stt-info'),
     trProvider: $('#sel-tr-provider'), trModel: $('#sel-tr-model'), trInfo: $('#tr-info'), effortField: $('#field-tr-effort'), effortSeg: $('#seg-tr-effort'),
     tone: $('#seg-tone'), style: $('#inp-style'), styleCounter: $('#style-counter'), trRestart: $('#tr-restart-hint'),
-    ttsModel: $('#sel-tts-model'), ttsInfo: $('#tts-info'),
+    ttsProvider: $('#sel-tts-provider'), ttsModel: $('#sel-tts-model'), ttsInfo: $('#tts-info'),
+    ttsVoice: $('#sel-tts-voice'), voiceField: $('#field-tts-voice'),
+    path: $('#sel-dubbing-path'), realtimeModel: $('#sel-realtime-model'), realtimeField: $('#field-realtime-model'),
+    route: $('#models-route'), assume: $('#cost-assume'),
+    cardStt: $('#card-stt'), cardTr: $('#card-translate'), cardTts: $('#card-tts'),
     stabilityField: $('#field-tts-stability'), presetsField: $('#field-tts-presets'), presetsSeg: $('#seg-tts-presets'),
     styleField: $('#field-tts-style'), speedField: $('#rng-tts-speed').closest('.field'), boostField: $('#field-tts-boost'), boost: $('#chk-tts-boost'),
     normSeg: $('#seg-tts-norm'),
@@ -695,7 +765,11 @@ export function initModels() {
   });
   els.vocabAdd = els.vocabForm.querySelector('button[type="submit"]');
   els.glossAdd = els.glossForm.querySelector('button[type="submit"]');
-  els.eyebrows = { stt: Array.from(document.querySelectorAll('[data-eyebrow="stt"]')), translate: Array.from(document.querySelectorAll('[data-eyebrow="translate"]')) };
+  els.eyebrows = {
+    stt: Array.from(document.querySelectorAll('[data-eyebrow="stt"]')),
+    translate: Array.from(document.querySelectorAll('[data-eyebrow="translate"]')),
+    tts: Array.from(document.querySelectorAll('[data-eyebrow="tts"]')),
+  };
   els.chips = Object.fromEntries(Array.from(document.querySelectorAll('.apply-chip')).map((c) => [c.dataset.card, c]));
 
   const two = (v) => fmtDec(v, 2);
@@ -711,7 +785,19 @@ export function initModels() {
   els.trProvider.addEventListener('change', () => changeProvider('translate', els.trProvider.value));
   els.sttModel.addEventListener('change', () => patchModel({ sttModel: els.sttModel.value }));
   els.trModel.addEventListener('change', () => patchModel({ translateModel: els.trModel.value }));
-  els.ttsModel.addEventListener('change', () => patchModel({ ttsModel: els.ttsModel.value }));
+  els.ttsProvider?.addEventListener('change', () => changeProvider('tts', els.ttsProvider.value));
+  els.ttsModel.addEventListener('change', () => {
+    const patch = { ttsModel: els.ttsModel.value };
+    const model = findModel('tts', els.ttsModel.value);
+    if (current('ttsProvider') === 'groq' && model?.voices && !model.voices.includes(current('groqTtsVoice'))) patch.groqTtsVoice = model.voices[0];
+    patchModel(patch);
+  });
+  els.ttsVoice?.addEventListener('change', () => {
+    const key = current('ttsProvider') === 'groq' ? 'groqTtsVoice' : 'openaiTtsVoice';
+    patchModel({ [key]: els.ttsVoice.value });
+  });
+  els.path?.addEventListener('change', () => patchModel({ dubbingPath: els.path.value }));
+  els.realtimeModel?.addEventListener('change', () => patchModel({ realtimeModel: els.realtimeModel.value }));
   els.boost.addEventListener('change', () => patchModel({ ttsSpeakerBoost: els.boost.checked }));
   bindSegmented(els.normSeg, (value) => patchModel({ ttsTextNormalization: value }));
   bindSegmented(els.tone, (value) => patchSettings({ tone: value }));

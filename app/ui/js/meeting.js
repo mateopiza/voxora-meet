@@ -352,6 +352,7 @@ function renderTranslation() {
   fillSelect(els.src, srcOpts, src);
   fillSelect(els.dst, dstOpts, dst);
   setSegmented(els.fallback, s.fallbackMode || 'silence');
+  setSegmented(els.segmentation, s.segmentationMode || 'fixed');
   const srcName = langName(src).toLowerCase();
   els.fallbackOriginal.textContent = `Mi voz en ${srcName}`;
   els.fallbackHint.textContent = (FALLBACK_HINTS[s.fallbackMode] || FALLBACK_HINTS.silence)(srcName);
@@ -426,6 +427,7 @@ export function initMeeting() {
     src: $('#sel-src'), dst: $('#sel-dst'), swap: $('#btn-swap'),
     delay: $('#rng-delay'), delayValue: $('#delay-value'), fallback: $('#seg-fallback'), fallbackHint: $('#fallback-hint'),
     fallbackOriginal: $('#fallback-original-label'),
+    segmentation: $('#seg-segmentation'),
     meetLine: $('#meet-line'), meetLineText: $('#meet-line-text'), meetLineIcon: $('#meet-line-icon'), meetLineBtn: $('#btn-meet-line'),
     output: $('#sel-output'), outputHint: $('#output-hint'), meetMic: $('#meet-mic-name'), monitor: $('#sel-monitor'),
     preflight: $('#preflight'), main: $('#btn-session-main'), sub: $('#session-sub'), restartHint: $('#restart-hint'),
@@ -459,6 +461,7 @@ export function initMeeting() {
     patchSettings({ sourceLanguage: dst, targetLanguage: src });
   });
   bindSegmented(els.fallback, (value) => patchSettings({ fallbackMode: value }));
+  bindSegmented(els.segmentation, (value) => patchSettings({ segmentationMode: value }));
   $('#btn-goto-camera').addEventListener('click', () => goTab('camera'));
   els.meetLineBtn.addEventListener('click', () => meetLineAction?.run());
   els.delay.addEventListener('input', () => {

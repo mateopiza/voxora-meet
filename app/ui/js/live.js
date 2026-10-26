@@ -60,6 +60,11 @@ const feedVisible = () => state.activeTab === 'live' || state.activeTab === 'sim
 function metaBadges(turn) {
   const items = [];
   if (Number.isFinite(turn.latencyMs)) items.push(h('span', { class: 'badge', dataset: { tone: turn.latencyMs > (state.settings?.delayMs ?? 3000) ? 'warn' : 'cyan' }, title: 'Tiempo desde que terminaste la frase hasta que el doblaje estuvo listo' }, icon('clock'), fmtSeconds1(turn.latencyMs)));
+  const m = turn.metrics;
+  if (m?.sttMs) items.push(h('span', { class: 'badge', title: 'Transcripción' }, `STT ${fmtSeconds1(m.sttMs)}`));
+  if (m?.translateMs) items.push(h('span', { class: 'badge', title: 'Traducción' }, `Trad ${fmtSeconds1(m.translateMs)}`));
+  if (m?.ttsMs) items.push(h('span', { class: 'badge', title: 'Voz' }, `Voz ${fmtSeconds1(m.ttsMs)}`));
+  if (m && !m.sttMs && !m.translateMs && !m.ttsMs && m.totalMs) items.push(h('span', { class: 'badge', title: 'Tiempo del agente Realtime' }, `Realtime ${fmtSeconds1(m.totalMs)}`));
   if (Number.isFinite(turn.costVox)) items.push(h('span', { class: 'badge', dataset: { tone: 'violet' }, title: 'Créditos VOX de este turno' }, `${fmtInt(turn.costVox)} VOX`));
   if (turn.late) items.push(h('span', { class: 'badge', dataset: { tone: 'warn' }, title: 'El doblaje llegó después del retraso de sincronía' }, 'Tardío'));
   return items;
@@ -122,6 +127,7 @@ export function onTranslation(data) {
 export function onDub(data, engineNowMs) {
   const turn = ensureTurn(data.turnId);
   turn.late = Boolean(data.late);
+  if (data.metrics) turn.metrics = data.metrics;
   // engineNowMs: llegada del evento convertida por el shell al reloj del motor (performance.now()).
   const latency = Number(engineNowMs) - Number(turn.endedAt);
   if (Number.isFinite(latency) && latency > 0 && latency < 120000) turn.latencyMs = latency;

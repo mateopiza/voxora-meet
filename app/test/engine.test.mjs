@@ -57,9 +57,9 @@ test('engine: ready, ping, settings.get/set, delay.set, stats.get, devices.list 
 
     const got = await engine.call('settings.get');
     assert.equal(got.ok, true);
-    assert.equal(got.result.settings.delayMs, 3000);
+    assert.equal(got.result.settings.delayMs, 6000);
     assert.equal(got.result.settings.targetLanguage, 'en');
-    assert.deepEqual(got.result.providerKeys, { groq: false, elevenlabs: false, openai: false });
+    assert.deepEqual(got.result.providerKeys, { groq: false, elevenlabs: false, openai: false, deepgram: false });
 
     const set = await engine.call('settings.set', { settings: { delayMs: 4000, tone: 'formal' } });
     assert.equal(set.ok, true);

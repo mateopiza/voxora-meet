@@ -33,12 +33,30 @@ const MOCK_STT_BY_PROVIDER = {
   elevenlabs: [
     sttModel('scribe_v2', 'Scribe v2', 'El transcriptor más preciso de ElevenLabs (90+ idiomas); usa tu vocabulario como términos clave. Recomendado.', 0.4, true),
     sttModel('scribe_v1', 'Scribe v1', 'Generación anterior de Scribe; no admite términos clave del vocabulario.', 0.4),
+    sttModel('scribe_v2_realtime', 'Scribe v2 Realtime', 'Scribe por WebSocket sobre el turno ya cerrado.', 0.4),
   ],
   openai: [
     sttModel('gpt-4o-transcribe', 'GPT-4o Transcribe', 'La transcripción más precisa de OpenAI. Recomendado.', 0.36, true),
     sttModel('gpt-4o-mini-transcribe', 'GPT-4o mini Transcribe', 'Más rápido y a mitad de precio; algo menos preciso.', 0.18),
   ],
+  deepgram: [
+    sttModel('nova-3', 'Nova-3', 'Deepgram Nova-3 en el idioma de origen. Recomendado para comparar con Whisper.', 0.26, true),
+    sttModel('nova-3-multi', 'Nova-3 multilingüe', 'Nova-3 con detección de idioma. Un poco más caro.', 0.31),
+  ],
 };
+const MOCK_TTS_BY_PROVIDER = {
+  elevenlabs: null,
+  openai: [
+    { id: 'gpt-4o-mini-tts', label: 'GPT-4o mini TTS', description: 'Voz de catálogo. No clona tu voz.', recommended: true, voices: ['alloy', 'coral', 'nova'], price: { unit: '1k caracteres', usd: 0.0006 }, supportsStyle: false, supportsSpeakerBoost: false, supportsSpeed: false, supportsNormalizationOn: false, stabilityPresets: null, available: true },
+  ],
+  groq: [
+    { id: 'canopylabs/orpheus-v1-english', label: 'Orpheus inglés', description: 'Voz de catálogo en inglés. No clona tu voz.', recommended: true, voices: ['troy', 'austin'], price: { unit: '1k caracteres', usd: 0.022 }, supportsStyle: false, supportsSpeakerBoost: false, supportsSpeed: false, supportsNormalizationOn: false, stabilityPresets: null, available: true },
+  ],
+};
+const MOCK_REALTIME = [
+  { id: 'eleven_realtime_v1_max', label: 'Realtime Max', description: 'Agente de voz. Estimado.', recommended: true, price: { unit: 'hora de audio', usd: 2.4, estimated: true } },
+  { id: 'eleven_realtime_v1_mini', label: 'Realtime Mini', description: 'Más rápido. Estimado.', recommended: false, price: { unit: 'hora de audio', usd: 0.8, estimated: true } },
+];
 const MOCK_TRANSLATE_BY_PROVIDER = {
   groq: MOCK_TRANSLATE,
   openai: [
@@ -49,9 +67,15 @@ const MOCK_TRANSLATE_BY_PROVIDER = {
   ],
 };
 const MOCK_PROVIDERS = {
-  stt: ['groq', 'elevenlabs', 'openai'], translate: ['groq', 'openai'],
-  labels: { groq: 'Groq', elevenlabs: 'ElevenLabs', openai: 'OpenAI' },
-  defaults: { stt: { groq: 'whisper-large-v3', elevenlabs: 'scribe_v2', openai: 'gpt-4o-transcribe' }, translate: { groq: 'openai/gpt-oss-120b', openai: 'gpt-4.1' } },
+  stt: ['groq', 'elevenlabs', 'openai', 'deepgram'], translate: ['groq', 'openai'], tts: ['elevenlabs', 'openai', 'groq'],
+  paths: ['staged', 'eleven_realtime'],
+  labels: { groq: 'Groq', elevenlabs: 'ElevenLabs', openai: 'OpenAI', deepgram: 'Deepgram' },
+  defaults: {
+    stt: { groq: 'whisper-large-v3', elevenlabs: 'scribe_v2', openai: 'gpt-4o-transcribe', deepgram: 'nova-3' },
+    translate: { groq: 'openai/gpt-oss-120b', openai: 'gpt-4.1' },
+    tts: { elevenlabs: 'eleven_multilingual_v2', openai: 'gpt-4o-mini-tts', groq: 'canopylabs/orpheus-v1-english' },
+    realtime: 'eleven_realtime_v1_max',
+  },
 };
 const tts = (id, label, description, languages, costMultiplier, caps = {}) => ({
   id, label, description, recommended: false, supportsReasoningEffort: false, reasoningEfforts: [],
@@ -62,7 +86,8 @@ const tts = (id, label, description, languages, costMultiplier, caps = {}) => ({
 const MOCK_TTS = [
   tts('eleven_multilingual_v2', 'Multilingual v2', 'La voz clonada más fiel y natural, en 29 idiomas. Recomendado para reuniones.', 29, 1, { recommended: true, supportsStyle: true, supportsSpeakerBoost: true }),
   tts('eleven_v3', 'Eleven v3', 'El más expresivo (70+ idiomas). Estabilidad por presets (Creativo, Natural, Robusto) y más latencia.', 74, 1, { supportsLanguageCode: true, supportsSpeed: false, stabilityPresets: [0, 0.5, 1], maxChars: 5000 }),
-  tts('eleven_v4_turbo', 'Eleven v4 Turbo', 'v4 optimizado para baja latencia; mitad de costo por carácter.', 85, 0.5),
+  tts('eleven_v4', 'Eleven v4', 'Nueva generación: muy expresivo, 90+ idiomas.', 85, 1, { supportsLanguageCode: true }),
+  tts('eleven_v4_turbo', 'Eleven v4 Turbo', 'v4 optimizado para baja latencia; mitad de costo por carácter.', 85, 0.5, { supportsLanguageCode: true }),
   tts('eleven_turbo_v2_5', 'Turbo v2.5', 'Buen equilibrio entre calidad y latencia en 32 idiomas; mitad de costo, algo menos fiel al timbre clonado.', 32, 0.5, { supportsLanguageCode: true, supportsNormalizationOn: false, maxChars: 40000 }),
   tts('eleven_flash_v2_5', 'Flash v2.5', 'Latencia mínima y mitad de costo en 32 idiomas; la menos fiel al timbre clonado.', 32, 0.5, { supportsLanguageCode: true, supportsNormalizationOn: false, maxChars: 40000 }),
 ];
@@ -151,7 +176,7 @@ export function createMock(dispatch) {
     { term: 'OKR', translation: null },
   ];
   let vocabulary = ['VOXORA', 'Mateo', 'Bogotá', 'Kubernetes', 'Grafana'];
-  const keys = { groq: scenario !== 'fresh', elevenlabs: scenario !== 'fresh', openai: false };
+  const keys = { groq: scenario !== 'fresh', elevenlabs: scenario !== 'fresh', openai: false, deepgram: false };
   const voices = [
     { voiceId: 'Xb7hH8MSUJpSbSDYk0k2', name: 'Mateo - Sagitario', category: 'professional', previewUrl: '' },
     { voiceId: 'pNInz6obpgDQGcFmaJgB', name: 'Mateo reuniones (IVC)', category: 'cloned', previewUrl: '' },
@@ -370,7 +395,9 @@ export function createMock(dispatch) {
           stt: sttByProvider[sttProvider],
           translate: translateByProvider[trProvider],
           sttByProvider, translateByProvider, providers: MOCK_PROVIDERS,
-          tts: withSelected(MOCK_TTS, settings.ttsModel, (id) => tts(id, id, 'Modelo de ElevenLabs sin ficha propia.', null, 1)),
+          tts: withSelected((settings.ttsProvider && settings.ttsProvider !== 'elevenlabs' ? MOCK_TTS_BY_PROVIDER[settings.ttsProvider] : null) || MOCK_TTS, settings.ttsModel, (id) => tts(id, id, 'Modelo de voz sin ficha propia.', null, 1)),
+          ttsByProvider: { ...MOCK_TTS_BY_PROVIDER, elevenlabs: MOCK_TTS },
+          realtime: MOCK_REALTIME,
           defaults: { ...MODEL_DEFAULTS }, offline,
           fetchedAt: new Date().toISOString(), sources: { groq: offline ? 'static' : 'live', elevenlabs: scenario === 'fresh' ? 'static' : 'live', openai: keys.openai ? 'live' : 'static' }, errors,
         };

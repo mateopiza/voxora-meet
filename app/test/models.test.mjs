@@ -257,7 +257,7 @@ test('proveedor por etapa: Scribe para transcribir y OpenAI para traducir', asyn
   assert.deepEqual(res.sources, { groq: 'live', elevenlabs: 'live', openai: 'live' });
 
   // `stt` / `translate` son las listas del proveedor elegido.
-  assert.deepEqual(res.stt.map((m) => m.id), ['scribe_v2', 'scribe_v1']);
+  assert.deepEqual(res.stt.map((m) => m.id), ['scribe_v2', 'scribe_v1', 'scribe_v2_realtime']);
   assert.equal(res.stt[0].provider, 'elevenlabs');
   assert.equal(res.stt[0].recommended, true);
   assert.equal(res.stt[0].price.usd, 0.4);
@@ -279,7 +279,8 @@ test('proveedor por etapa: Scribe para transcribir y OpenAI para traducir', asyn
   assert.deepEqual(res.sttByProvider.groq.map((m) => m.id), ['whisper-large-v3', 'whisper-large-v3-turbo']);
   assert.equal(res.translateByProvider.groq.some((m) => m.id === 'openai/gpt-oss-120b'), true);
   assert.equal(res.translateByProvider.openai, res.translate);
-  assert.deepEqual(res.providers.stt, ['groq', 'elevenlabs', 'openai']);
+  assert.deepEqual(res.providers.stt, ['groq', 'elevenlabs', 'openai', 'deepgram']);
+  assert.deepEqual(res.providers.tts, ['elevenlabs', 'openai', 'groq']);
   assert.deepEqual(res.providers.translate, ['groq', 'openai']);
   assert.equal(res.providers.defaults.stt.elevenlabs, 'scribe_v2');
   assert.equal(res.providers.defaults.translate.openai, 'gpt-4.1');
@@ -304,7 +305,8 @@ test('proveedor por etapa: solo los proveedores en uso marcan el catálogo como 
 test('buildCatalog y describeTtsModel toleran respuestas incompletas', () => {
   const empty = buildCatalog({ groq: [null, {}, { id: 'whisper-x', active: false }], elevenlabs: [{}, { model_id: 'x' }] });
   assert.deepEqual([empty.stt, empty.translate, empty.tts], [[], [], []]);
-  assert.deepEqual(empty.sttByProvider.elevenlabs.map((m) => m.id), ['scribe_v2', 'scribe_v1'], 'Scribe es una lista curada');
+  assert.deepEqual(empty.sttByProvider.elevenlabs.map((m) => m.id), ['scribe_v2', 'scribe_v1', 'scribe_v2_realtime'], 'Scribe es una lista curada');
+  assert.deepEqual(empty.sttByProvider.deepgram.map((m) => m.id), ['nova-3', 'nova-3-multi']);
   assert.deepEqual([empty.sttByProvider.openai, empty.translateByProvider.openai], [[], []]);
   const bare = describeTtsModel({ model_id: 'eleven_v3' }, 'static');
   assert.equal(bare.languages, 74);
