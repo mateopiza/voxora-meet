@@ -217,6 +217,7 @@ export class DubbingPipeline extends EventEmitter {
     if (p.voiceId) this.setVoiceId(p.voiceId);
     if (tts.provider === "openai" && p.openaiTtsVoice) tts.setVoice?.(p.openaiTtsVoice);
     if (tts.provider === "groq" && p.groqTtsVoice) tts.setVoice?.(p.groqTtsVoice);
+    if (tts.provider === "deepgram" && p.deepgramTtsVoice) tts.setVoice?.(p.deepgramTtsVoice);
     if (p.styleInstruction !== undefined) tts.setInstructions?.(p.styleInstruction);
     if (p.targetLanguage) tts.setLanguage?.(p.targetLanguage);
     return this.currentSettings();
@@ -248,7 +249,7 @@ export class DubbingPipeline extends EventEmitter {
   }
 
   async resolveVoiceId() {
-    if (this.#tts?.provider === "openai" || this.#tts?.provider === "groq") return this.#tts.voice || "stock";
+    if (this.#tts?.provider === "openai" || this.#tts?.provider === "groq" || this.#tts?.provider === "deepgram") return this.#tts.voice || "stock";
     if (this.#voiceId) return this.#voiceId;
     const profile = await this.#profiles.get(this.#userId);
     if (!profile?.voiceId) throw new DubbingError("El usuario no tiene voz clonada configurada", { stage: "tts" });

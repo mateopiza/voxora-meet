@@ -2,10 +2,17 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { DeepgramStt, deepgramQuery } from "./deepgram.mjs";
 
-test("deepgramQuery: nova-3-multi pide language=multi", () => {
-  assert.equal(deepgramQuery("nova-3", "es").get("language"), "es");
-  assert.equal(deepgramQuery("nova-3-multi", "es").get("model"), "nova-3");
-  assert.equal(deepgramQuery("nova-3-multi", "es").get("language"), "multi");
+test("deepgramQuery: nova-3-multi pide language=multi y no manda endpointing", () => {
+  const mono = deepgramQuery("nova-3", "es", { keyterms: ["VOXORA", "VOXORA", ""] });
+  assert.equal(mono.get("language"), "es");
+  assert.equal(mono.get("smart_format"), "true");
+  assert.equal(mono.get("numerals"), "true");
+  assert.equal(mono.has("endpointing"), false);
+  assert.equal(mono.has("sample_rate"), false);
+  assert.deepEqual(mono.getAll("keyterm"), ["VOXORA"]);
+  const multi = deepgramQuery("nova-3-multi", "es");
+  assert.equal(multi.get("model"), "nova-3");
+  assert.equal(multi.get("language"), "multi");
 });
 
 test("DeepgramStt transcribe un turno y descarta el silencio", async () => {

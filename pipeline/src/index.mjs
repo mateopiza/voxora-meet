@@ -2,7 +2,7 @@
 
 export { GroqWhisperStt, SttError, DEFAULT_WHISPER_MODEL, DEFAULT_OPENAI_STT_MODEL, clampSttTemperature, buildVocabularyPrompt, whisperDiscardReason, shouldDiscardWhisperTranscript, summarizeSegments, confidenceFromLogprobs } from "./stt/groq-whisper.mjs";
 export { ElevenLabsScribeStt, DEFAULT_SCRIBE_MODEL, buildKeyterms, scribeConfidence, scribeDiscardReason, scribeSupportsKeyterms } from "./stt/elevenlabs-scribe.mjs";
-export { DeepgramStt, DEFAULT_DEEPGRAM_MODEL, deepgramQuery } from "./stt/deepgram.mjs";
+export { DeepgramStt, DEFAULT_DEEPGRAM_MODEL, deepgramQuery, buildDeepgramKeyterms } from "./stt/deepgram.mjs";
 export { ElevenLabsScribeRealtimeStt, SCRIBE_REALTIME_MODEL } from "./stt/elevenlabs-scribe-realtime.mjs";
 export { FallbackStt } from "./stt/fallback.mjs";
 export {
@@ -40,7 +40,8 @@ export {
   SPEED_RANGE,
 } from "./tts/elevenlabs.mjs";
 export { SpeechTts, splitForSpeech, DEFAULT_OPENAI_TTS_MODEL, DEFAULT_GROQ_TTS_MODEL } from "./tts/speech.mjs";
-export { ElevenRealtimeDub, interpreterInstructions, REALTIME_SECRET_URL } from "./realtime/eleven-realtime-dub.mjs";
+export { DeepgramTts, DEFAULT_DEEPGRAM_TTS_MODEL, DEFAULT_DEEPGRAM_VOICE } from "./tts/deepgram.mjs";
+export { ElevenRealtimeDub, interpreterInstructions, resolveRealtimeVoice, REALTIME_SECRET_URL } from "./realtime/eleven-realtime-dub.mjs";
 export { VoiceOnboarding, VoiceOnboardingError, validateSamples, normalizeSample } from "./voice-onboarding.mjs";
 export { DubbingPipeline, DubbingError, StageQueue } from "./dubbing-pipeline.mjs";
 export { GlossaryStore, VocabularyStore, ProfileStore, JsonStore } from "./stores.mjs";

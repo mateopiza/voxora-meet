@@ -319,7 +319,8 @@ export async function createEngine({ input = process.stdin, output = process.std
         const dub = new module.ElevenRealtimeDub({
           apiKey: keys.elevenlabs,
           model: settings.realtimeModel,
-          voice: settings.voiceName || settings.voiceId,
+          voiceId: settings.voiceId,
+          voiceName: settings.voiceName,
           sourceLanguage: settings.sourceLanguage,
           targetLanguage: settings.targetLanguage,
           glossary: entries,

@@ -280,7 +280,7 @@ test('proveedor por etapa: Scribe para transcribir y OpenAI para traducir', asyn
   assert.equal(res.translateByProvider.groq.some((m) => m.id === 'openai/gpt-oss-120b'), true);
   assert.equal(res.translateByProvider.openai, res.translate);
   assert.deepEqual(res.providers.stt, ['groq', 'elevenlabs', 'openai', 'deepgram']);
-  assert.deepEqual(res.providers.tts, ['elevenlabs', 'openai', 'groq']);
+  assert.deepEqual(res.providers.tts, ['elevenlabs', 'openai', 'groq', 'deepgram']);
   assert.deepEqual(res.providers.translate, ['groq', 'openai']);
   assert.equal(res.providers.defaults.stt.elevenlabs, 'scribe_v2');
   assert.equal(res.providers.defaults.translate.openai, 'gpt-4.1');

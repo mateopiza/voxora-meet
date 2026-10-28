@@ -1,8 +1,13 @@
-// STT con Deepgram Nova-3 por turno completo.
+// STT con Deepgram Nova por turno completo.
 //
 // Misma interfaz que GroqWhisperStt: el PCM del turno se envuelve en WAV y se
 // manda a `POST /v1/listen`. `nova-3` usa el idioma de origen; `nova-3-multi`
-// pide `language=multi` (el id de API sigue siendo `nova-3`).
+// no es otro modelo del API: pide `model=nova-3` y `language=multi`.
+//
+// `endpointing` solo existe en el streaming. Aquí el turno ya viene cortado
+// por el segmentador, así que no se envía. El sample rate va en la cabecera
+// WAV (no se duplica en la query). El vocabulario de Nova-3 va como `keyterm`
+// repetido (Nova-2 usaba `keywords`, que este cliente no manda).
 
 import { pcmToWav, pcmDurationMs } from "../util/wav.mjs";
 import { fetchWithRetry, throwHttpError, isAbortError } from "../util/http.mjs";
@@ -14,15 +19,35 @@ export const DEEPGRAM_BASE_URL = "https://api.deepgram.com/v1";
 export const DEFAULT_DEEPGRAM_MODEL = "nova-3";
 
 const PROVIDER_LABEL = "Deepgram";
+const KEYTERMS_MAX = 100;
+const KEYTERM_MAX_CHARS = 100;
 
-export function deepgramQuery(model, language) {
+/** Términos válidos como `keyterm` de Nova-3: deduplicados y dentro del tope del API. */
+export function buildDeepgramKeyterms(terms = []) {
+  const seen = new Set();
+  const out = [];
+  for (const raw of terms ?? []) {
+    const term = String(raw ?? "").trim().replace(/\s+/g, " ");
+    if (!term || term.length > KEYTERM_MAX_CHARS) continue;
+    const key = term.toLocaleLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(term);
+    if (out.length === KEYTERMS_MAX) break;
+  }
+  return out;
+}
+
+export function deepgramQuery(model, language, { keyterms = [] } = {}) {
   const multi = model === "nova-3-multi";
   const params = new URLSearchParams({
     model: multi ? "nova-3" : (model || DEFAULT_DEEPGRAM_MODEL),
     smart_format: "true",
     punctuate: "true",
+    numerals: "true",
     language: multi ? "multi" : normalizeLanguage(language),
   });
+  for (const term of buildDeepgramKeyterms(keyterms)) params.append("keyterm", term);
   return params;
 }
 
@@ -35,6 +60,8 @@ export class DeepgramStt {
     model = DEFAULT_DEEPGRAM_MODEL,
     language = "es",
     minConfidence = 0.3,
+    vocabulary = null,
+    userId = "default",
     baseUrl = DEEPGRAM_BASE_URL,
     timeoutMs = 30_000,
     retries = 2,
@@ -50,6 +77,8 @@ export class DeepgramStt {
     this.model = String(model || DEFAULT_DEEPGRAM_MODEL);
     this.language = normalizeLanguage(language);
     this.minConfidence = minConfidence;
+    this.vocabulary = vocabulary;
+    this.userId = userId;
     this.baseUrl = baseUrl.replace(/\/+$/, "");
     this.timeoutMs = timeoutMs;
     this.retries = retries;
@@ -66,12 +95,18 @@ export class DeepgramStt {
     return 0;
   }
 
-  async transcribeTurn({ pcm, sampleRate = 16_000, language, signal, evidence = null } = {}) {
+  async resolveKeyterms(extra = [], userId = this.userId) {
+    const stored = this.vocabulary ? await this.vocabulary.get(userId) : [];
+    return [...stored, ...(extra ?? [])];
+  }
+
+  async transcribeTurn({ pcm, sampleRate = 16_000, language, keyterms = [], signal, evidence = null, userId } = {}) {
     if (!pcm || !pcm.byteLength) return this.#discarded("empty_audio", { durationMs: 0 });
     const durationMs = pcmDurationMs(pcm.byteLength, { sampleRate });
     const model = this.model;
     const wav = pcmToWav(pcm, { sampleRate, channels: 1, bitsPerSample: 16 });
-    const url = `${this.baseUrl}/listen?${deepgramQuery(model, language || this.language)}`;
+    const terms = await this.resolveKeyterms(keyterms, userId);
+    const url = `${this.baseUrl}/listen?${deepgramQuery(model, language || this.language, { keyterms: terms })}`;
     let res;
     try {
       res = await fetchWithRetry(

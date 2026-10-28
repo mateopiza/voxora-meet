@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { ElevenRealtimeDub, interpreterInstructions } from "./eleven-realtime-dub.mjs";
+import { ElevenRealtimeDub, interpreterInstructions, resolveRealtimeVoice } from "./eleven-realtime-dub.mjs";
 
 class FakeSocket {
   constructor(url, options) {
@@ -41,7 +41,7 @@ test("Eleven Realtime abre con client secret y emite audio de 48 kHz", async () 
     constructor(url, options) { super(url, options); sockets.push(this); }
   };
   const dub = new ElevenRealtimeDub({
-    apiKey: "xi", model: "eleven_realtime_v1_max", voice: "Ana", fetch: fetchImpl, WebSocket: WS, now: () => 0,
+    apiKey: "xi", model: "eleven_realtime_v1_max", voiceId: "pFZP5JQG7iQjIQuC4Bku", voiceName: "Lily - Velvety Actress", fetch: fetchImpl, WebSocket: WS, now: () => 0,
   });
   const audio = [];
   const segments = [];
@@ -51,7 +51,7 @@ test("Eleven Realtime abre con client secret y emite audio de 48 kHz", async () 
   assert.equal(secretBody.session.model, "eleven_realtime_v1_max");
   assert.equal(secretBody.session.audio.input.turn_detection.type, "semantic_vad");
   assert.equal(secretBody.session.audio.input.turn_detection.eagerness, "medium");
-  assert.equal(secretBody.session.audio.output.voice, "Ana");
+  assert.equal(secretBody.session.audio.output.voice, "pFZP5JQG7iQjIQuC4Bku");
   assert.equal(sockets[0].options.headers.Authorization, "Bearer secret-1");
 
   const pcm = Buffer.alloc(3200);
@@ -68,4 +68,37 @@ test("Eleven Realtime abre con client secret y emite audio de 48 kHz", async () 
   const unavailable = async () => new Response("Realtime models are not available", { status: 403 });
   const blocked = new ElevenRealtimeDub({ apiKey: "xi", fetch: unavailable, WebSocket: WS });
   await assert.rejects(blocked.open(), /no está habilitado/);
+});
+
+test("resolveRealtimeVoice prefiere el ID y rechaza el nombre visible", () => {
+  assert.equal(resolveRealtimeVoice({ voiceId: "pFZP5JQG7iQjIQuC4Bku", voiceName: "Lily - Velvety Actress" }), "pFZP5JQG7iQjIQuC4Bku");
+  assert.equal(resolveRealtimeVoice({ voiceName: "lily" }), "lily");
+  assert.equal(resolveRealtimeVoice({ voiceId: "lily", voiceName: "Lily - Velvety Actress" }), "lily");
+  assert.equal(resolveRealtimeVoice({ voice: "alloy" }), "alloy");
+  assert.equal(resolveRealtimeVoice({}), "");
+  assert.throws(
+    () => resolveRealtimeVoice({ voiceName: "Lily - Velvety Actress" }),
+    /no acepta el nombre «Lily - Velvety Actress»/,
+  );
+});
+
+test("el nombre visible se rechaza antes de llamar a ElevenLabs", () => {
+  assert.throws(
+    () => new ElevenRealtimeDub({ apiKey: "xi", voice: "Lily - Velvety Actress", fetch: () => { throw new Error("no debía llamar"); }, WebSocket: FakeSocket }),
+    /no acepta el nombre «Lily - Velvety Actress»/,
+  );
+});
+
+test("un voice id rechazado por la API no se muestra como JSON cortado", async () => {
+  const fetchImpl = async () => new Response(JSON.stringify({
+    detail: {
+      type: "validation_error",
+      code: "invalid_voice_id",
+      message: "Unknown voice 'pFZP5JQG7iQjIQuC4Bku'. Pass one of ['lily']",
+    },
+  }), { status: 422 });
+  const dub = new ElevenRealtimeDub({
+    apiKey: "xi", voiceId: "pFZP5JQG7iQjIQuC4Bku", fetch: fetchImpl, WebSocket: FakeSocket,
+  });
+  await assert.rejects(dub.open(), /no reconoce «pFZP5JQG7iQjIQuC4Bku»/);
 });

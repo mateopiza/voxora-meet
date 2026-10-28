@@ -79,6 +79,10 @@ export const TTS_USD_PER_1K_CHARS = Object.freeze({
   "tts-1-hd": 0.03,
   "canopylabs/orpheus-v1-english": 0.022,
   "canopylabs/orpheus-arabic-saudi": 0.04,
+  // Deepgram pay as you go (https://deepgram.com/pricing, 2026-10-24): por 1k caracteres.
+  "aura-2": 0.03,
+  aura: 0.015,
+  flux: 0.045,
 });
 
 /**
@@ -93,6 +97,7 @@ export const REALTIME_USD_PER_HOUR_ESTIMATE = Object.freeze({
 /** Proveedor de un modelo de voz según su id. */
 export function ttsProviderOf(model) {
   const id = String(model ?? "");
+  if (/^(aura-2|aura|flux)(-|$)/i.test(id)) return "deepgram";
   if (TTS_USD_PER_1K_CHARS[id] || TTS_USD_PER_1K_CHARS[id.toLowerCase()]) {
     return /^canopylabs\//i.test(id) ? "groq" : "openai";
   }
@@ -201,7 +206,12 @@ export function chatPriceFor(model) {
 /** USD por 1k caracteres y proveedor del modelo de voz. */
 export function ttsPriceFor(model, override) {
   const id = cleanModelId(model, DEFAULT_MODELS.tts);
-  const direct = TTS_USD_PER_1K_CHARS[id] ?? TTS_USD_PER_1K_CHARS[id.toLowerCase()];
+  const family = /^(aura-2|flux)-/i.test(id) ? id.slice(0, id.indexOf("-", id.startsWith("aura-2") ? 6 : 0) > 0 && id.startsWith("aura-2-") ? 6 : id.startsWith("flux-") ? 4 : id.length) : id;
+  const priceKey = id.toLowerCase().startsWith("aura-2-") ? "aura-2"
+    : id.toLowerCase().startsWith("flux-") ? "flux"
+      : /^aura-/i.test(id) ? "aura"
+        : id;
+  const direct = TTS_USD_PER_1K_CHARS[priceKey] ?? TTS_USD_PER_1K_CHARS[priceKey.toLowerCase()] ?? TTS_USD_PER_1K_CHARS[id] ?? TTS_USD_PER_1K_CHARS[id.toLowerCase()];
   if (direct != null) return { model: id, usdPer1k: direct, provider: ttsProviderOf(id), known: true, multiplier: null };
   const multiplier = ttsCostMultiplierFor(id, override);
   return {

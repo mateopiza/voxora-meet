@@ -20,16 +20,45 @@ test('slow sink: exactly one write in flight, order preserved and bounded queue'
   w.dispose();
 });
 
-test('overload stops destination and discards waiting audio instead of replaying it', async () => {
+test('a full queue drops the oldest unsent audio and keeps the destination open', async () => {
   let release;
-  const errors = [], written = [];
-  const w = new PcmWriter({ write: (b) => { written.push(b); return new Promise((r) => { release = r; }); } }, { maxQueuedMs: 40, onError: (e) => errors.push(e) });
-  w.enqueue(pcm()); await tick(); w.enqueue(pcm());
-  assert.equal(w.enqueue(pcm()), false);
-  assert.equal(errors[0].code, 'audio_output_overload');
+  const errors = [], overruns = [], written = [];
+  const w = new PcmWriter({ write: (b) => { written.push(b); return new Promise((r) => { release = r; }); } }, {
+    maxQueuedMs: 40, onError: (e) => errors.push(e), onOverrun: (info) => overruns.push(info),
+  });
+  const first = pcm(); first[0] = 1;
+  const stale = pcm(); stale[0] = 2;
+  const kept = pcm(); kept[0] = 3;
+  const live = pcm(); live[0] = 4;
+  w.enqueue(first); await tick();
+  w.enqueue(stale);
+  w.enqueue(kept);
+  assert.equal(w.enqueue(live), true);
+  assert.equal(errors.length, 0);
+  assert.equal(overruns.length, 1);
+  assert.ok(overruns[0].droppedMs >= 20);
+  assert.equal(w.stats().closed, false);
   release(); await tick();
-  assert.equal(written.length, 1);
+  release(); await tick();
+  release(); await tick();
+  assert.deepEqual(written.map((chunk) => chunk[0]), [1, 3, 4]);
   assert.equal(w.stats().queuedMs, 0);
+  w.dispose();
+});
+
+test('a one-second burst is sliced and written without stopping the dub', async () => {
+  const written = [];
+  const errors = [];
+  const w = new PcmWriter({
+    write(chunk) { written.push(chunk.length); return Promise.resolve(); },
+  }, { maxWriteMs: 20, onError: (e) => errors.push(e) });
+  const burst = Buffer.alloc(96 * 1000);
+  assert.equal(w.enqueue(burst), true);
+  await tick();
+  assert.equal(errors.length, 0);
+  assert.equal(w.stats().closed, false);
+  assert.equal(written.reduce((sum, n) => sum + n, 0), burst.length);
+  assert.ok(written.every((n) => n <= 1920));
   w.dispose();
 });
 

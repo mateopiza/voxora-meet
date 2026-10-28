@@ -332,5 +332,11 @@ test('eleven realtime manda el PCM al agente y no llama a processTurn', async ()
   await tick();
   assert.equal(virtualMic.written.length, 1);
   assert.equal(events.some((event) => event.event === 'dub' && event.data.metrics.totalMs === 400), true);
+  const burst = Buffer.alloc(96 * 3000);
+  rt.emit('audio', { pcm: burst, sampleRate: 48000 });
+  await tick();
+  assert.equal(c.state, 'running');
+  assert.equal(events.some((event) => event.event === 'error'), false);
+  assert.equal(virtualMic.written.reduce((sum, chunk) => sum + chunk.length, 0), 960 + burst.length);
   await c.stop();
 });

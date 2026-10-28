@@ -346,6 +346,9 @@ test('errores: modelo inexistente o sin acceso → model_unavailable con mensaje
   );
   // No confunde: voz inexistente, rate limit con nombre de modelo, key inválida.
   assert.equal(friendlyError(new TtsError('ElevenLabs 404: {"detail":{"status":"voice_not_found"}}', { status: 404 })).code, 'voice_missing');
+  const named = friendlyError(Object.assign(new Error('ElevenLabs Realtime: {"detail":{"code":"invalid_voice_id","message":"Unknown voice \'Lily - Velvety Actress\'"}}'), { status: 422, provider: 'elevenlabs' }));
+  assert.equal(named.code, 'invalid_voice_id');
+  assert.match(named.message, /nombre visible/);
   assert.equal(friendlyError(new TranslationError('Groq Chat 429: Rate limit reached for model `openai/gpt-oss-120b`', { status: 429 })).code, 'provider_quota');
   assert.equal(friendlyError(new SttError('Groq Whisper 401: invalid_api_key', { status: 401 })).code, 'provider_auth');
   const timeout = friendlyError(Object.assign(new DOMException('The operation was aborted due to timeout', 'TimeoutError'), { provider: 'groq' }));

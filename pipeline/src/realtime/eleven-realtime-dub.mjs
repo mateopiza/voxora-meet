@@ -14,6 +14,70 @@ export const REALTIME_SECRET_URL = "https://api.elevenlabs.io/v1/convai/realtime
 export const REALTIME_WS_URL = "wss://api.elevenlabs.io/v1/convai/realtime";
 export const REALTIME_MAX_MS = 540_000;
 
+// Nombres cortos que el endpoint acepta tal cual. El nombre visible
+// («Lily - Velvety Actress») no es uno de ellos y no se recorta al alias.
+const REALTIME_VOICE_ALIASES = new Set([
+  "brian", "chris", "george", "jessica", "liam", "lily", "matilda", "michael", "sarah", "will",
+  "alloy", "ash", "ballad", "cedar", "coral", "echo", "marin", "sage", "shimmer", "verse",
+]);
+
+function isLibraryVoiceId(value) {
+  return /^[A-Za-z0-9]{8,64}$/.test(value);
+}
+
+/** Alias u nombre de voz OpenAI solo si el valor entero ya es uno de la lista. */
+function exactAlias(value) {
+  const raw = String(value || "").trim();
+  if (!raw || /\s/.test(raw)) return "";
+  const token = raw.toLowerCase();
+  return REALTIME_VOICE_ALIASES.has(token) ? token : "";
+}
+
+/**
+ * Voz que acepta `audio.output.voice`: primero el voice_id de la biblioteca,
+ * luego un alias exacto (`lily`, `brian`, voces de OpenAI) si el valor YA es
+ * ese alias. El nombre visible («Lily - Velvety Actress») no se recorta.
+ * Vacío significa «usar el default del servidor» (`brian`).
+ */
+export function resolveRealtimeVoice({ voiceId = "", voiceName = "", voice = "" } = {}) {
+  const id = String(voiceId || "").trim();
+  const named = String(voice || voiceName || "").trim();
+  if (isLibraryVoiceId(id)) return id;
+  const idAlias = exactAlias(id);
+  if (idAlias) return idAlias;
+  if (!named && !id) return "";
+  const token = exactAlias(named);
+  if (token) return token;
+  if (isLibraryVoiceId(named)) return named;
+  const label = named || id;
+  throw Object.assign(new Error(
+    `Eleven Realtime no acepta el nombre «${label}». Hay que enviar el voice_id de tu biblioteca de ElevenLabs, o un alias que ya sea uno de la lista permitida. Una voz de biblioteca o un clon no se sustituye por el alias corto. Si es una voz propia, ElevenLabs puede exigir horas mínimas de audio para depositarla en Realtime, y el entrenamiento tiene que haber terminado.`,
+  ), { code: "invalid_voice_id", provider: "elevenlabs" });
+}
+
+function realtimeFailure(body, status) {
+  let detail = null;
+  try { detail = JSON.parse(body)?.detail; } catch { /* cuerpo no JSON */ }
+  const code = typeof detail?.code === "string" ? detail.code : "";
+  const apiMessage = typeof detail?.message === "string" ? detail.message : "";
+  if (/not available|aren't available|realtime models/i.test(`${apiMessage} ${body}`)) {
+    return {
+      code: "model_unavailable",
+      message: "Eleven Realtime no está habilitado en esta cuenta de ElevenLabs. El camino por etapas sigue disponible: cámbialo en Modelos.",
+    };
+  }
+  if (code === "invalid_voice_id" || /unknown voice/i.test(apiMessage)) {
+    const unknown = /Unknown voice '([^']+)'/.exec(apiMessage)?.[1];
+    return {
+      code: "invalid_voice_id",
+      message: unknown
+        ? `Eleven Realtime no reconoce «${unknown}». Hay que enviar el voice_id de tu biblioteca, no el nombre visible, y no se sustituye por un alias corto. Si es una voz propia, ElevenLabs puede exigir horas mínimas de audio para depositarla en Realtime.`
+        : "Eleven Realtime no reconoce esa voz. Usa el voice_id de tu biblioteca de ElevenLabs. Depositar una voz propia puede exigir horas mínimas de audio.",
+    };
+  }
+  return { code: "provider_auth", message: `ElevenLabs Realtime: ${apiMessage || body.slice(0, 300) || status}` };
+}
+
 export function interpreterInstructions({ sourceLanguage = "es", targetLanguage = "en", glossary = [], styleInstruction = "" } = {}) {
   const source = languageName(sourceLanguage);
   const target = languageName(targetLanguage);
@@ -64,6 +128,8 @@ export class ElevenRealtimeDub extends EventEmitter {
     apiKey,
     model = "eleven_realtime_v1_max",
     voice = "",
+    voiceId = "",
+    voiceName = "",
     sourceLanguage = "es",
     targetLanguage = "en",
     glossary = [],
@@ -81,7 +147,7 @@ export class ElevenRealtimeDub extends EventEmitter {
     this.#fetch = fetchImpl;
     this.#WebSocket = WebSocketImpl;
     this.model = model;
-    this.voice = voice;
+    this.voice = resolveRealtimeVoice({ voiceId, voiceName, voice });
     this.sourceLanguage = normalizeLanguage(sourceLanguage);
     this.targetLanguage = normalizeLanguage(targetLanguage);
     this.glossary = glossary;
@@ -129,12 +195,16 @@ export class ElevenRealtimeDub extends EventEmitter {
   }
 
   applySettings(patch = {}) {
+    const nextVoice = (patch.voiceId || patch.voiceName || patch.voice)
+      ? resolveRealtimeVoice({ voiceId: patch.voiceId, voiceName: patch.voiceName, voice: patch.voice })
+      : this.voice;
+    const voiceChanged = nextVoice !== this.voice;
     if (patch.realtimeModel) this.model = patch.realtimeModel;
-    if (patch.voiceName || patch.voiceId) this.voice = patch.voiceName || patch.voiceId;
+    this.voice = nextVoice;
     if (patch.sourceLanguage) this.sourceLanguage = normalizeLanguage(patch.sourceLanguage);
     if (patch.targetLanguage) this.targetLanguage = normalizeLanguage(patch.targetLanguage);
     if (patch.styleInstruction !== undefined) this.styleInstruction = patch.styleInstruction;
-    if (patch.realtimeModel && this.#ws) this.open().catch((error) => this.emit("error", error));
+    if ((patch.realtimeModel || voiceChanged) && this.#ws) this.open().catch((error) => this.emit("error", error));
     return this.currentSettings();
   }
 
@@ -182,11 +252,8 @@ export class ElevenRealtimeDub extends EventEmitter {
     });
     const body = await res.text();
     if (!res.ok) {
-      const unavailable = /not available|aren't available|realtime models/i.test(body);
-      const message = unavailable
-        ? "Eleven Realtime no está habilitado en esta cuenta de ElevenLabs. El camino por etapas sigue disponible: cámbialo en Modelos."
-        : `ElevenLabs Realtime: ${body.slice(0, 300) || res.status}`;
-      throw Object.assign(new Error(message), { status: res.status, provider: "elevenlabs", code: unavailable ? "model_unavailable" : "provider_auth" });
+      const failure = realtimeFailure(body, res.status);
+      throw Object.assign(new Error(failure.message), { status: res.status, provider: "elevenlabs", code: failure.code });
     }
     let data = {};
     try { data = JSON.parse(body); } catch { /* sin JSON */ }

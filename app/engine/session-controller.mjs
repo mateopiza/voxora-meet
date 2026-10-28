@@ -161,6 +161,14 @@ export class SessionController extends EventEmitter {
       session.writer = new PcmWriter(session.virtualMic, {
         ...this.deps.writerOptions,
         onError: (error) => failOutput('virtual-mic', error),
+        onOverrun: (info) => {
+          if (this.session !== session || session.closing) return;
+          this.emit('warn', {
+            kind: 'audio-delivery',
+            ...info,
+            message: 'La salida no alcanzaba el ritmo. Se omitió un tramo de audio para seguir en vivo, sin cortar el doblaje.',
+          });
+        },
         onWritten: (presentation) => {
           if (!presentation || session.closing || this.session !== session) return;
           const now = this.now();
