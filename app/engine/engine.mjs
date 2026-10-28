@@ -42,6 +42,8 @@ const AUDIO_MIME = {
 const MAX_SAMPLE_BYTES = 10 * 1024 * 1024; // límite por archivo de ElevenLabs IVC
 const MIN_CLONE_MS = 60_000;
 const USER_ID = 'default';
+// Respaldo de STT si el proveedor elegido falla en un turno (solo los que tengan key).
+const STT_FALLBACK_ORDER = ['groq', 'deepgram', 'elevenlabs', 'openai'];
 
 // `tts.preview`: frase corta fija en el idioma destino (se sintetiza tal cual, sin traducir).
 const PREVIEW_TEXTS = {
@@ -171,21 +173,34 @@ export async function createEngine({ input = process.stdin, output = process.std
     return settings.sttProvider || 'groq';
   }
 
-  /** Cliente de STT del proveedor elegido. */
-  function buildStt(index, settings, keys, vocabulary) {
-    const provider = settings.sttProvider;
-    const options = {
-      apiKey: providerKey(keys, provider, 'transcripción'),
-      model: settings.sttModel,
-      temperature: settings.sttTemperature,
-      language: settings.sourceLanguage,
-      vocabulary,
-      userId: USER_ID,
-    };
+  /** Cliente de STT de un proveedor (modelo `model` o el por defecto del proveedor). */
+  function sttClient(index, provider, options, realtime = false) {
     if (provider === 'deepgram') return new index.DeepgramStt(options);
-    if (sttKind(settings) === 'scribe-realtime') return new index.ElevenLabsScribeRealtimeStt(options);
+    if (realtime) return new index.ElevenLabsScribeRealtimeStt(options);
     if (provider === 'elevenlabs') return new index.ElevenLabsScribeStt(options);
     return new index.GroqWhisperStt({ ...options, provider });
+  }
+
+  /**
+   * Cliente de STT del proveedor elegido. Si hay keys de otros proveedores, el
+   * turno que falle se reintenta con ellos (modelo por defecto de cada uno).
+   */
+  function buildStt(index, settings, keys, vocabulary) {
+    const provider = settings.sttProvider;
+    const base = { temperature: settings.sttTemperature, language: settings.sourceLanguage, vocabulary, userId: USER_ID };
+    const primary = sttClient(index, provider, {
+      ...base, apiKey: providerKey(keys, provider, 'transcripción'), model: settings.sttModel,
+    }, sttKind(settings) === 'scribe-realtime');
+    const fallbacks = STT_FALLBACK_ORDER
+      .filter((p) => p !== provider && keys[p])
+      .map((p) => sttClient(index, p, { ...base, apiKey: keys[p] }));
+    if (!fallbacks.length || !index.FallbackStt) return primary;
+    return new index.FallbackStt(primary, fallbacks, {
+      onFallback: ({ from, to }) => controller.emit('warn', {
+        kind: 'provider',
+        message: `${PROVIDER_LABELS[from] ?? from} falló en un turno; se transcribió con ${PROVIDER_LABELS[to] ?? to}.`,
+      }),
+    });
   }
 
   /** Cliente de voz: ElevenLabs clonado, OpenAI o Groq Orpheus. */
@@ -673,6 +688,44 @@ export async function createEngine({ input = process.stdin, output = process.std
   return { server, controller, store, models, handlers, loadSibling };
 }
 
+/**
+ * Telemetría local por reunión (logs\telemetry.log, JSON por línea, rotado):
+ * tiempos de cada etapa por turno, respaldos/avisos y el resumen al detener la
+ * sesión. Sirve para ajustar el retraso y comparar proveedores con datos reales.
+ * Nunca incluye texto transcrito ni audio.
+ */
+export function createTelemetryRecorder(logger) {
+  let lastStats = null;
+  let running = false;
+  const line = (type, data) => logger.info(JSON.stringify({ type, ...data }));
+  return (event, data) => {
+    try {
+      if (event === 'stats') lastStats = data;
+      else if (event === 'dub') {
+        line('turn', {
+          turnId: data?.turnId, durationMs: data?.durationMs, late: data?.late, driftMs: data?.driftMs,
+          deferredByMs: data?.deferredByMs, timings: data?.metrics ?? null,
+        });
+      } else if (event === 'warn' && ['provider', 'late-dub', 'drift', 'audio-delivery', 'latency-budget'].includes(data?.kind)) {
+        line('warn', { kind: data.kind, reason: data.reason ?? null, message: data.message ?? null });
+      } else if (event === 'status') {
+        if (data?.state === 'running') {
+          running = true;
+          line('session-start', {});
+        } else if (running && data?.state === 'idle') {
+          running = false;
+          const s = lastStats ?? {};
+          line('session-end', {
+            delayMs: s.delayMs, segmentationMode: s.segmentationMode, latencyP50Ms: s.latencyP50Ms,
+            latencyP95Ms: s.latencyP95Ms, recommendedDelayMs: s.recommendedDelayMs, lateDubs: s.lateDubs, totalVox: s.totalVox,
+          });
+          lastStats = null;
+        }
+      }
+    } catch { /* la telemetría nunca interrumpe el motor */ }
+  };
+}
+
 async function main() {
   const { dataDir, logDir } = parseArgs(process.argv.slice(2));
   // %LOCALAPPDATA%\VOXORA Meet\logs\engine.log (rotado); el shell además guarda nuestro stderr en shell.log.
@@ -680,7 +733,9 @@ async function main() {
   logger.info(`motor iniciando (node ${process.version}, pid ${process.pid}, ${process.platform}/${process.arch})`);
   const { server, controller } = await createEngine({ dataDir });
   const emit = server.emitEvent.bind(server);
+  const recordTelemetry = createTelemetryRecorder(createFileLogger({ dir: logDir ?? defaultLogsDir(), name: 'telemetry' }));
   server.emitEvent = (event, data) => {
+    recordTelemetry(event, data);
     if (LOGGED_EVENTS.has(event)) logger.write(event === 'error' ? 'ERROR' : event === 'warn' || event === 'limit' ? 'WARN' : 'INFO', describeForLog(event, data));
     return emit(event, data);
   };

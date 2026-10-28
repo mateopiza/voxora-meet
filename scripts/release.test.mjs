@@ -56,3 +56,11 @@ test('verify-release distingue código legible de ofuscado', () => {
   assert.equal(readabilityProblem(obfuscate(source.replace(/^\/\/.*$/gm, ''), 'ui/test.js', { target: 'browser' })), null);
   assert.match(readabilityProblem('var a=1;\n//# sourceMappingURL=a.js.map'), /sourceMappingURL/);
 });
+
+test('release firmado: exige commit limpio con el tag v<versión>', async () => {
+  const { checkReleaseTag } = await import('./release.mjs');
+  const git = (dirty, tags) => (args) => ({ status: 0, stderr: '', stdout: args[0] === 'status' ? dirty : tags });
+  assert.doesNotThrow(() => checkReleaseTag('0.3.4', { git: git('', 'v0.3.4\n') }));
+  assert.throws(() => checkReleaseTag('0.3.4', { git: git('', 'v0.3.1\n') }), /tag v0\.3\.4/);
+  assert.throws(() => checkReleaseTag('0.3.4', { git: git(' M package.json\n', 'v0.3.4\n') }), /sin commitear/);
+});

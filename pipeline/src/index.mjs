@@ -4,6 +4,7 @@ export { GroqWhisperStt, SttError, DEFAULT_WHISPER_MODEL, DEFAULT_OPENAI_STT_MOD
 export { ElevenLabsScribeStt, DEFAULT_SCRIBE_MODEL, buildKeyterms, scribeConfidence, scribeDiscardReason, scribeSupportsKeyterms } from "./stt/elevenlabs-scribe.mjs";
 export { DeepgramStt, DEFAULT_DEEPGRAM_MODEL, deepgramQuery } from "./stt/deepgram.mjs";
 export { ElevenLabsScribeRealtimeStt, SCRIBE_REALTIME_MODEL } from "./stt/elevenlabs-scribe-realtime.mjs";
+export { FallbackStt } from "./stt/fallback.mjs";
 export {
   ContextTranslator,
   TranslationError,

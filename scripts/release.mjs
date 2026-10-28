@@ -20,7 +20,7 @@ import { buildInstaller } from './build-installer.mjs';
 import { buildNative } from './build-native.mjs';
 import { ensureNodeRuntime } from './lib/node-runtime.mjs';
 import { bundleEngine, obfuscateUiModule } from './lib/obfuscate.mjs';
-import { ROOT } from './lib/version.mjs';
+import { ROOT, productVersion } from './lib/version.mjs';
 import { failed as signFailed, layoutTargets, signFiles } from './sign.mjs';
 import { stampVersion } from './stamp-version.mjs';
 import { verifyRelease } from './verify-release.mjs';
@@ -79,7 +79,23 @@ function packLayout(vxpack, layout, payload, log) {
   if (last.length) log(last[last.length - 1].trim());
 }
 
-export async function release({ sign = true, build = true, verify = true, nodeVersion, log = console.log } = {}) {
+/**
+ * Una versión firmada (publicable) debe salir de un commit limpio con el tag `v<versión>`,
+ * para que package.json, el instalador y git no vuelvan a divergir.
+ */
+export function checkReleaseTag(version, { git = (args) => spawnSync('git', args, { cwd: ROOT, encoding: 'utf8' }) } = {}) {
+  const dirty = git(['status', '--porcelain', '--untracked-files=no']);
+  if (dirty.status !== 0) throw new Error(`git status falló: ${dirty.stderr}`);
+  if (dirty.stdout.trim()) throw new Error('Hay cambios sin commitear: una versión firmada debe salir de un commit limpio.');
+  const tags = git(['tag', '--points-at', 'HEAD']);
+  const list = tags.stdout.split(/\r?\n/).map((t) => t.trim()).filter(Boolean);
+  if (!list.includes(`v${version}`)) {
+    throw new Error(`HEAD no tiene el tag v${version} (tags: ${list.join(', ') || 'ninguno'}). Crea el tag con: git tag v${version}`);
+  }
+}
+
+export async function release({ sign = true, build = true, verify = true, nodeVersion, log = console.log, checkTag = sign } = {}) {
+  if (checkTag) checkReleaseTag(productVersion().text);
   const version = stampVersion({ quiet: true });
   const v = version.text;
   log(`\n▶ VOXORA Meet ${v}${sign ? '' : ' (sin firma)'}`);
